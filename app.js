@@ -885,24 +885,17 @@ function showReportArea(area){
 async function loadFofa(options={}){
   const churchId=selectedChurchId();
   if(!churchId){
-    state.fofaItems=[];state.fofaEvaluations=[];state.fofaCurrent=null;
+    state.fofaItems=[];state.fofaEvaluations=[];state.fofaCurrent=null;state.fofaProgress=null;
     renderFofa();
     return;
   }
-  const [items,evals]=await Promise.all([
-    api("list_fofa_items",{}),
-    api("list_fofa_evaluations",currentRequest())
-  ]);
-  state.fofaItems=items.data||[];
-  state.fofaEvaluations=evals.data||[];
-  const active=state.fofaEvaluations.find(x=>String(x.status||"")==="Em avaliação")||state.fofaEvaluations[0]||null;
-  if(active){
-    const detail=await api("get_fofa_evaluation",{avaliacao_id:active.avaliacao_id});
-    state.fofaCurrent=detail;
-  }else state.fofaCurrent=null;
+  const ws=await api("fofa_workspace",currentRequest());
+  state.fofaItems=Array.isArray(ws.items)?ws.items:[];
+  state.fofaEvaluations=Array.isArray(ws.evaluations)?ws.evaluations:[];
+  state.fofaCurrent=ws.current||null;
+  state.fofaProgress=ws.progress||{total:state.fofaItems.length,answered:0,axis_totals:{},axis_answered:{}};
   renderFofa();
 }
-
 function fofaResponseMap(){
   const m=new Map();
   (state.fofaCurrent?.responses||[]).forEach(r=>m.set(String(r.fofa_item_id||""),r));
@@ -927,6 +920,7 @@ function renderFofa(){
       <div class="fofa-index-chips-v21">
         <span>🔴 ${percent(ind.Identidade||0)}</span><span>🔵 ${percent(ind.Liderança||0)}</span>
         <span>🟡 ${percent(ind["Novas Gerações"]||0)}</span><span>🟢 ${percent(ind.Discipulado||0)}</span>
+        <span class="fofa-total-progress-v21r1">✓ ${Number(state.fofaProgress?.answered||0)} / ${Number(state.fofaProgress?.total||state.fofaItems.length||0)} avaliados</span>
       </div>`;
   }else{
     $("fofaCurrentSummary").innerHTML='<div class="empty-v111">Nenhuma avaliação FOFA iniciada para esta igreja.</div>';
@@ -934,13 +928,18 @@ function renderFofa(){
 
   qsa("[data-fofa-axis]").forEach(b=>b.classList.toggle("active",b.dataset.fofaAxis===state.fofaAxis));
   const responseMap=fofaResponseMap();
-  const items=(state.fofaItems||[]).filter(x=>x.eixo===state.fofaAxis);
+  const textKey=v=>String(v??"").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g," ");
+  const items=(state.fofaItems||[]).filter(x=>textKey(x.eixo)===textKey(state.fofaAxis));
+  const progress=state.fofaProgress||{};
+  const axisTotal=Number(progress.axis_totals?.[state.fofaAxis]||items.length||0);
+  const axisAnswered=Number(progress.axis_answered?.[state.fofaAxis]||0);
+  const progressHtml=`<div class="fofa-progress-v21r1"><strong>${axisAnswered} de ${axisTotal}</strong><span>critérios avaliados em ${esc(state.fofaAxis)}</span><div><i style="width:${axisTotal?Math.round(axisAnswered/axisTotal*100):0}%"></i></div></div>`;
   const types=["Força","Fraqueza","Oportunidade","Ameaça"];
-  $("fofaMatrixGrid").innerHTML=types.map(type=>{
-    const rows=items.filter(x=>x.tipo_fofa===type);
+  $("fofaMatrixGrid").innerHTML=progressHtml+types.map(type=>{
+    const rows=items.filter(x=>textKey(x.tipo_fofa)===textKey(type));
     return `<section class="fofa-quadrant-v21 fofa-${type.toLowerCase().replace("ç","c")}" data-fofa-type="${type}">
       <div class="fofa-quadrant-head-v21"><strong>${type.toUpperCase()}</strong><span>${type==="Força"||type==="Fraqueza"?"Ambiente interno":"Ambiente externo"}</span></div>
-      ${rows.map(item=>{
+      ${rows.length?rows.map(item=>{
         const r=responseMap.get(String(item.fofa_item_id))||{};
         return `<article class="fofa-factor-v21" data-fofa-item="${item.fofa_item_id}">
           <strong>${esc(item.fator)}</strong>
@@ -955,7 +954,7 @@ function renderFofa(){
           </div>
           <div class="fofa-factor-actions-v21"><span>${r.indice_prioridade?`Prioridade: <b>${r.indice_prioridade}</b> · ${esc(r.classificacao||"")}`:""}</span><button data-save-fofa="${item.fofa_item_id}">Salvar</button></div>
         </article>`;
-      }).join("")}
+      }).join(""):`<div class="fofa-empty-quadrant-v21r1">Nenhum critério carregado neste quadrante.<br><small>Eixo: ${esc(state.fofaAxis)} · Tipo: ${esc(type)}</small></div>`}
     </section>`;
   }).join("");
 
@@ -1000,17 +999,21 @@ async function saveFofaItem(itemId){
       impacto:val("impacto"),urgencia:val("urgencia"),
       governabilidade:val("governabilidade"),alinhamento:val("alinhamento")
     });
-    const detail=await api("get_fofa_evaluation",{avaliacao_id:state.fofaCurrent.evaluation.avaliacao_id});
-    state.fofaCurrent=detail;renderFofa();toast("Item FOFA salvo.");
+    await loadFofa({background:true});
+    toast("Item FOFA salvo ✔️");
   }finally{btn.disabled=false}
 }
 
 async function concludeFofa(){
   if(!state.fofaCurrent?.evaluation?.avaliacao_id)return;
-  if(!confirm("Concluir esta avaliação FOFA? Os índices serão consolidados."))return;
-  const r=await api("conclude_fofa_evaluation",{avaliacao_id:state.fofaCurrent.evaluation.avaliacao_id});
-  toast(`FOFA concluída · Índice geral ${percent(r.indice_geral||0)}`);
-  await Promise.all([loadFofa({background:true}),loadFofaHistory({background:true})]);
+  const answered=Number(state.fofaProgress?.answered||0),total=Number(state.fofaProgress?.total||state.fofaItems.length||0);
+  if(!answered)return toast("Avaliação vazia. Registre respostas antes de concluir.");
+  if(!confirm(`Concluir esta avaliação FOFA? ${answered} de ${total} critérios possuem resposta. Os índices serão consolidados.`))return;
+  try{
+    const r=await api("conclude_fofa_evaluation",{avaliacao_id:state.fofaCurrent.evaluation.avaliacao_id});
+    toast(`FOFA concluída · Índice geral ${percent(r.indice_geral||0)}`);
+    await Promise.all([loadFofa({background:true}),loadFofaHistory({background:true})]);
+  }catch(e){toast(e.message||"Não foi possível concluir a avaliação.")}
 }
 
 async function loadFofaHistory(options={}){
