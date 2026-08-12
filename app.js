@@ -14,7 +14,7 @@ let state={
   user:null,modules:[],scope:{polos:[],distritos:[],igrejas:[],filtros:{}},
   context:{polo_id:"",distrito_id:"",igreja_id:"",data_inicio:"",data_fim:""},
   dashboard:null,requirements:[],results:[],planner:[],reports:[],difficulties:[],
-  fofaItems:[],fofaEvaluations:[],fofaHistory:[],fofaCurrent:null,fofaAxis:"Identidade",
+  fofaItems:[],fofaEvaluations:[],fofaHistory:[],fofaCurrent:null,fofaAxis:"Identidade",fofaSmart:null,
   churchProfile:null,departments:[],churchFormDirty:false,users:[],developer:null,
   currentPriority:"Identidade",selectedRequirementId:"",currentAiReport:"",currentReport:null,editingReportId:""
 };
@@ -885,7 +885,7 @@ function showReportArea(area){
 async function loadFofa(options={}){
   const churchId=selectedChurchId();
   if(!churchId){
-    state.fofaItems=[];state.fofaEvaluations=[];state.fofaCurrent=null;state.fofaProgress=null;
+    state.fofaItems=[];state.fofaEvaluations=[];state.fofaCurrent=null;state.fofaProgress=null;state.fofaSmart=null;
     renderFofa();
     return;
   }
@@ -893,6 +893,7 @@ async function loadFofa(options={}){
   state.fofaItems=Array.isArray(ws.items)?ws.items:[];
   state.fofaEvaluations=Array.isArray(ws.evaluations)?ws.evaluations:[];
   state.fofaCurrent=ws.current||null;
+  state.fofaSmart=ws.smart_diagnostic||null;
   state.fofaProgress=ws.progress||{total:state.fofaItems.length,answered:0,axis_totals:{},axis_answered:{}};
   renderFofa();
 }
@@ -901,6 +902,88 @@ function fofaResponseMap(){
   (state.fofaCurrent?.responses||[]).forEach(r=>m.set(String(r.fofa_item_id||""),r));
   return m;
 }
+
+
+function fofaSmartFactorOptions(axis,type,selectedId=""){
+  const key=v=>String(v??"").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+  const rows=(state.fofaItems||[]).filter(x=>key(x.eixo)===key(axis)&&key(x.tipo_fofa)===key(type));
+  return '<option value="">Selecione o fator FOFA...</option>'+rows.map(x=>
+    `<option value="${esc(x.fofa_item_id)}" ${String(x.fofa_item_id)===String(selectedId)?"selected":""}>${esc(x.fator)}</option>`
+  ).join("");
+}
+
+function renderFofaSmartDiagnostic(){
+  const host=$("fofaSmartDiagnostic"); if(!host)return;
+  const d=state.fofaSmart;
+  if(!selectedChurchId()){host.innerHTML='<div class="empty-v111">Selecione uma igreja para gerar o diagnóstico inteligente.</div>';return}
+  if(!d||d.ok===false){host.innerHTML='<div class="empty-v111">Diagnóstico inteligente indisponível.</div>';return}
+
+  const axes=["Identidade","Liderança","Novas Gerações","Discipulado"];
+  const summaries=axes.map(axis=>{
+    const x=d.by_axis?.[axis]||{};
+    return `<div class="fofa-smart-axis-card-v21r2"><strong>${esc(axis)}</strong><b>${percent(x.percentual||0)}</b>
+      <span>${fmt(x.alcancado||0)} de ${fmt(x.meta||0)} · ${Number(x.metas_configuradas||0)}/${Number(x.requisitos||0)} metas</span>
+      <small>${Number(x.forcas_sugeridas||0)} força(s) · ${Number(x.fraquezas_sugeridas||0)} fraqueza(s)</small></div>`;
+  }).join("");
+
+  const currentRows=(d.requirements||[]).filter(x=>String(x.prioridade||"")===String(state.fofaAxis||""));
+  const canApply=!!state.fofaCurrent&&String(state.fofaCurrent.evaluation?.status||"")!=="Concluído";
+
+  const rows=currentRows.map(r=>{
+    const type=r.tipo_sugerido||"", cls=type==="Força"?"force":"weakness";
+    return `<article class="fofa-smart-requirement-v21r2" data-smart-req="${esc(r.requisito_id)}">
+      <div class="fofa-smart-req-head-v21r2"><div><small>${esc(r.codigo||r.requisito_id)}</small><strong>${esc(r.titulo)}</strong></div>
+      <span class="fofa-smart-badge-v21r2 ${cls}">${esc(type||"Sem sugestão")}</span></div>
+      <div class="fofa-smart-metrics-v21r2"><span>Meta <b>${fmt(r.meta||0)}</b></span><span>Realizado <b>${fmt(r.alcancado||0)}</b></span>
+      <span>Atingimento <b>${percent(r.percentual||0)}</b></span><span>Gap <b>${fmt(r.gap||0)}</b></span></div>
+      <p>${esc(r.evidencia_sugerida||"")}</p>
+      ${type?`<div class="fofa-smart-apply-v21r2">
+        <label><span>Vincular ao fator FOFA</span><select data-smart-target>${fofaSmartFactorOptions(r.prioridade,type,r.fofa_item_sugerido_id||"")}</select></label>
+        <label><span>Nota sugerida</span><select data-smart-note>${[1,2,3,4,5].map(n=>`<option value="${n}" ${Number(r.nota_sugerida)===n?"selected":""}>${n}</option>`).join("")}</select></label>
+        <button data-apply-smart="${esc(r.requisito_id)}" ${canApply?"":"disabled"}>${canApply?"Aplicar na FOFA":"Inicie uma avaliação"}</button>
+      </div>`:`<div class="fofa-smart-no-meta-v21r2">Configure uma meta para habilitar a sugestão automática.</div>`}
+    </article>`;
+  }).join("");
+
+  host.innerHTML=`<div class="fofa-smart-head-v21r2"><div><p class="eyebrow">DIAGNÓSTICO INTELIGENTE</p><h3>REQUISITOS + METAS + RESULTADOS</h3>
+    <p>Forças e Fraquezas são sugeridas pelo atingimento das metas e só são gravadas após validação da liderança. Oportunidades e Ameaças permanecem manuais.</p></div>
+    <button id="refreshSmartFofaButton" class="secondary-v21r2">↻ Atualizar diagnóstico</button></div>
+    <div class="fofa-smart-kpis-v21r2"><div><span>Metas configuradas</span><strong>${percent(d.indice_meta||0)}</strong></div>
+    <div><span>Índice de execução</span><strong>${percent(d.indice_execucao||0)}</strong></div>
+    <div><span>Meta total</span><strong>${fmt(d.total_meta||0)}</strong></div><div><span>Realizado</span><strong>${fmt(d.total_realizado||0)}</strong></div></div>
+    <div class="fofa-smart-axis-grid-v21r2">${summaries}</div>
+    <div class="fofa-smart-list-title-v21r2"><strong>${esc(state.fofaAxis)}</strong><span>${currentRows.length} requisito(s)</span></div>
+    <div class="fofa-smart-requirements-v21r2">${rows||'<div class="empty-v111">Nenhum requisito nesta prioridade.</div>'}</div>`;
+
+  $("refreshSmartFofaButton").onclick=refreshFofaSmart;
+  qsa("[data-apply-smart]",host).forEach(b=>b.onclick=()=>applyFofaSmartSuggestion(b.dataset.applySmart));
+}
+
+async function refreshFofaSmart(){
+  try{
+    const payload={...currentRequest()};
+    if(state.fofaCurrent?.evaluation?.avaliacao_id)payload.avaliacao_id=state.fofaCurrent.evaluation.avaliacao_id;
+    await api("refresh_fofa_smart_diagnostic",payload);
+    toast("Diagnóstico inteligente atualizado ✔️");
+    await loadFofa({background:true});
+  }catch(e){toast(e.message||"Não foi possível atualizar o diagnóstico.")}
+}
+
+async function applyFofaSmartSuggestion(requirementId){
+  const card=document.querySelector(`[data-smart-req="${CSS.escape(requirementId)}"]`);
+  if(!card||!state.fofaCurrent?.evaluation?.avaliacao_id)return toast("Inicie uma avaliação FOFA.");
+  const target=card.querySelector("[data-smart-target]")?.value||"";
+  const note=card.querySelector("[data-smart-note]")?.value||"";
+  if(!target)return toast("Selecione o fator FOFA que receberá esta evidência.");
+  const btn=card.querySelector("[data-apply-smart]"); btn.disabled=true; btn.textContent="Aplicando...";
+  try{
+    await api("apply_fofa_smart_suggestion",{...currentRequest(),
+      avaliacao_id:state.fofaCurrent.evaluation.avaliacao_id,requisito_id:requirementId,fofa_item_id:target,nota:note});
+    toast("Evidência aplicada à FOFA ✔️"); await loadFofa({background:true});
+  }catch(e){toast(e.message||"Não foi possível aplicar a sugestão.")}
+  finally{btn.disabled=false}
+}
+
 
 function renderFofa(){
   const church=selectedChurch();
@@ -926,6 +1009,7 @@ function renderFofa(){
     $("fofaCurrentSummary").innerHTML='<div class="empty-v111">Nenhuma avaliação FOFA iniciada para esta igreja.</div>';
   }
 
+  renderFofaSmartDiagnostic();
   qsa("[data-fofa-axis]").forEach(b=>b.classList.toggle("active",b.dataset.fofaAxis===state.fofaAxis));
   const responseMap=fofaResponseMap();
   const textKey=v=>String(v??"").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g," ");
