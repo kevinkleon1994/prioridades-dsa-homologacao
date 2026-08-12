@@ -1,0 +1,25 @@
+{
+  "name": "Prioridades Estratégicas | DSA",
+  "short_name": "Prioridades DSA",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#eef5f6",
+  "theme_color": "#102333",
+  "description": "Prioridades DSA — Template Enterprise Restaurado v1.11",
+  "icons": [
+    {
+      "src": "./assets/icone_192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./assets/icone_512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
