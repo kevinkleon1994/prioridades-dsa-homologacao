@@ -10,7 +10,7 @@ const MODULE_TO_VIEW={dashboard:"dashboard",prioridades:"priorities",planner:"pl
 const VIEW_TITLES={dashboard:"Dashboard Executivo",priorities:"Prioridades Estratégicas",planner:"Planner",timeline:"Linha do tempo",reports:"Relatórios",requirements:"Requisitos",myChurch:"Minha Igreja",admin:"Opções do Desenvolvedor"};
 
 let state={
-  token:localStorage.getItem("prioridades_token")||"",
+  token:sessionStorage.getItem("prioridades_token")||localStorage.getItem("prioridades_token")||"",
   user:null,modules:[],scope:{polos:[],distritos:[],igrejas:[],filtros:{}},
   context:{polo_id:"",distrito_id:"",igreja_id:"",data_inicio:"",data_fim:""},
   dashboard:null,requirements:[],results:[],planner:[],reports:[],difficulties:[],
@@ -27,6 +27,93 @@ function cacheSet(name,data,extra=""){PERF.memory.set(cacheKey(name,extra),{save
 function cacheInvalidate(names=null){if(!names){PERF.memory.clear();return}const list=Array.isArray(names)?names:[names];[...PERF.memory.keys()].forEach(k=>{if(list.some(n=>k.startsWith(n+"|")))PERF.memory.delete(k)})}
 function localCacheRead(name){try{const raw=localStorage.getItem(`prioridades_cache_${name}`);if(!raw)return null;const o=JSON.parse(raw),ttl=PERF.ttl[name]||60000;return o&&Date.now()-Number(o.savedAt||0)<=ttl?o.data:null}catch(_e){return null}}
 function localCacheWrite(name,data){try{localStorage.setItem(`prioridades_cache_${name}`,JSON.stringify({savedAt:Date.now(),data}))}catch(_e){}}
+
+function authSnapshotRead(){
+  try{
+    const raw=sessionStorage.getItem("prioridades_auth_snapshot");
+    return raw?JSON.parse(raw):null;
+  }catch(_e){return null}
+}
+function authSnapshotWrite(){
+  try{
+    sessionStorage.setItem("prioridades_auth_snapshot",JSON.stringify({
+      user:state.user||null,
+      modules:state.modules||[],
+      scope:state.scope||null,
+      savedAt:Date.now()
+    }));
+  }catch(_e){}
+}
+function persistSessionToken(token){
+  state.token=String(token||"");
+  if(state.token)sessionStorage.setItem("prioridades_token",state.token);
+  else sessionStorage.removeItem("prioridades_token");
+  // Remove token persistente legado: F5 continua na sessão, fechar a aba encerra o acesso local.
+  localStorage.removeItem("prioridades_token");
+}
+function uiStateWrite(){
+  try{
+    const active=document.querySelector(".view.active")?.id||"dashboardView";
+    sessionStorage.setItem("prioridades_ui_state",JSON.stringify({
+      view:active.replace(/View$/,""),
+      priority:state.currentPriority||"Identidade",
+      periodMode:$("periodMode")?.value||"ano",
+      yearSingle:$("yearSingle")?.value||"",
+      monthSingle:$("monthSingle")?.value||"",
+      yearStart:$("yearStart")?.value||"",
+      yearEnd:$("yearEnd")?.value||"",
+      monthStart:$("monthStart")?.value||"",
+      monthEnd:$("monthEnd")?.value||"",
+      dateStart:$("dateStart")?.value||"",
+      dateEnd:$("dateEnd")?.value||"",
+      pole:$("poleFilter")?.value||"",
+      district:$("districtFilter")?.value||"",
+      church:$("churchFilter")?.value||""
+    }));
+  }catch(_e){}
+}
+function uiStateRead(){
+  try{
+    const raw=sessionStorage.getItem("prioridades_ui_state");
+    return raw?JSON.parse(raw):null;
+  }catch(_e){return null}
+}
+function restoreUiControls(){
+  const s=uiStateRead();
+  if(!s)return;
+  if(s.periodMode&&$("periodMode"))$("periodMode").value=s.periodMode;
+  [["yearSingle",s.yearSingle],["monthSingle",s.monthSingle],["yearStart",s.yearStart],["yearEnd",s.yearEnd],
+   ["monthStart",s.monthStart],["monthEnd",s.monthEnd],["dateStart",s.dateStart],["dateEnd",s.dateEnd]]
+    .forEach(([id,v])=>{if($(id)&&v!==undefined&&v!=="")$(id).value=v});
+  updatePeriodVisibility();
+
+  if($("poleFilter")&&s.pole){
+    $("poleFilter").value=s.pole;fillDistricts();
+  }
+  if($("districtFilter")&&s.district){
+    $("districtFilter").value=s.district;fillChurches();
+  }
+  if($("churchFilter")&&s.church)$("churchFilter").value=s.church;
+
+  if(s.priority)state.currentPriority=s.priority;
+}
+async function restoreUiView(){
+  const s=uiStateRead();
+  const view=s?.view||"dashboard";
+  const target=VIEW_TITLES[view]?view:"dashboard";
+  await showView(target,{restore:true});
+}
+function bindClick(id,handler){
+  const el=$(id);if(el)el.addEventListener("click",handler);
+}
+function bindChange(id,handler){
+  const el=$(id);if(el)el.addEventListener("change",handler);
+}
+function bindInput(id,handler){
+  const el=$(id);if(el)el.addEventListener("input",handler);
+}
+
+
 async function once(key,fn){if(PERF.inflight.has(key))return PERF.inflight.get(key);const p=Promise.resolve().then(fn).finally(()=>PERF.inflight.delete(key));PERF.inflight.set(key,p);return p}
 function setSyncState(text,kind="ok"){const b=$("syncBadge");if(!b)return;const c=kind==="sync"?"#ffb800":kind==="error"?"#ff0046":"";b.innerHTML=`<i${c?` style="background:${c}"`:""}></i>${text}`}
 function moduleBusy(id,on,text="Atualizando..."){const el=$(id);if(!el)return;let x=el.querySelector('.module-sync-indicator-v112');if(on){if(!x){x=document.createElement('div');x.className='module-sync-indicator-v112';el.prepend(x)}x.textContent=text}else x?.remove()}
@@ -122,7 +209,13 @@ async function api(action,payload={},options={}){
 
   throw lastError||new Error("Falha ao comunicar com a API do Prioridades DSA.");
 }
-function hardLogout(){localStorage.removeItem("prioridades_token");state.token="";state.user=null}
+function hardLogout(){
+  sessionStorage.removeItem("prioridades_token");
+  sessionStorage.removeItem("prioridades_auth_snapshot");
+  sessionStorage.removeItem("prioridades_ui_state");
+  localStorage.removeItem("prioridades_token");
+  state.token="";state.user=null;
+}
 async function logout(){try{if(state.token)await api("logout",{})}catch(_e){}finally{hardLogout();location.reload()}}
 
 function periodPayload(){
@@ -153,29 +246,109 @@ function resetLoginProgress(){const box=$("loginProgressV20");if(!box)return;box
 function finishLoginProgress(){setLoginProgress(4,"Tudo pronto!","Ambiente carregado com sucesso.");qsa("#loginProgressV20 [data-login-step]").forEach(el=>{el.classList.add("done");el.classList.remove("active","pending")})}
 
 async function login(){
-  $("loginMessage").textContent="";$("loginButton").disabled=true;$("loginButton").textContent="Entrando...";
+  $("loginMessage").textContent="";
+  $("loginButton").disabled=true;
+  $("loginButton").textContent="Entrando...";
   let slowTimer=null;
+
   try{
     setLoginProgress(1,"Validando acesso...","Conectando ao ambiente seguro.");
-    slowTimer=setTimeout(()=>{$("loginProgressTextV20").textContent="A conexão está levando um pouco mais de tempo. Continuamos processando seu acesso..."},8000);
+    slowTimer=setTimeout(()=>{
+      if($("loginProgressTextV20"))$("loginProgressTextV20").textContent="A conexão está levando um pouco mais de tempo. Continuamos processando seu acesso...";
+    },6000);
+
     const r=await api("login",{login:$("loginEmail").value.trim(),senha:$("loginCode").value});
+
     setLoginProgress(2,"Carregando seu perfil...","Identificando função, módulos e permissões.");
-    state.token=r.token;state.user=r.user;state.modules=r.modules||[];state.scope=r.scope||state.scope;localStorage.setItem("prioridades_token",state.token);
-    applyModules();setupTerritory();renderProfile();
-    setLoginProgress(3,"Preparando seu ambiente...","Organizando território, filtros e visão executiva.");
+    persistSessionToken(r.token);
+    state.user=r.user;
+    state.modules=r.modules||[];
+    state.scope=r.scope||state.scope;
+    authSnapshotWrite();
+
+    applyModules();
+    setupTerritory();
+    renderProfile();
+    authSnapshotWrite();
+    restoreUiControls();
+    restoreUiControls();
+
+    setLoginProgress(3,"Preparando seu ambiente...","Abrindo o sistema enquanto os indicadores sincronizam.");
+
     const cachedDashboard=dashboardCacheRead();
-    if(cachedDashboard){state.dashboard=cachedDashboard;state.context={...state.context,...cachedDashboard.context};cacheSet("dashboard",cachedDashboard);renderDashboard(cachedDashboard);renderContext()}else{renderDashboardShell()}
-    setSyncState("Sincronizando dashboard","sync");
-    try{await loadDashboard({background:true})}catch(syncError){console.warn("Dashboard inicial:",syncError);setSyncState("Erro de sincronização","error")}
+    if(cachedDashboard){
+      state.dashboard=cachedDashboard;
+      state.context={...state.context,...cachedDashboard.context};
+      cacheSet("dashboard",cachedDashboard);
+      renderDashboard(cachedDashboard);
+      renderContext();
+    }else{
+      renderDashboardShell();
+      renderContext();
+    }
+
+    // Acesso visual imediato: Dashboard não bloqueia mais a entrada.
     finishLoginProgress();
-    await new Promise(res=>setTimeout(res,550));
-    startApp();resetLoginProgress();schedulePrefetchCoreModules();
-  }catch(e){resetLoginProgress();$("loginMessage").textContent=e.message}
-  finally{if(slowTimer)clearTimeout(slowTimer);$("loginButton").disabled=false;$("loginButton").innerHTML='Entrar <span aria-hidden="true">→</span>'}
+    startApp();
+    await restoreUiView();
+    resetLoginProgress();
+
+    setSyncState("Sincronizando","sync");
+    loadDashboard({background:true})
+      .then(()=>{setSyncState("Conectado","ok");schedulePrefetchCoreModules()})
+      .catch(err=>{console.warn("Dashboard inicial:",err);setSyncState("Erro de sincronização","error")});
+  }catch(e){
+    resetLoginProgress();
+    $("loginMessage").textContent=e.message;
+  }finally{
+    if(slowTimer)clearTimeout(slowTimer);
+    $("loginButton").disabled=false;
+    $("loginButton").innerHTML='Entrar <span aria-hidden="true">→</span>';
+  }
 }
 async function restore(){
   if(!state.token)return false;
-  try{const r=await api("session");state.user=r.user;state.modules=r.modules||[];return true}catch(e){hardLogout();return false}
+
+  // Migra token legado para sessionStorage.
+  persistSessionToken(state.token);
+
+  const snap=authSnapshotRead();
+  if(snap?.user){
+    state.user=snap.user;
+    state.modules=snap.modules||[];
+    state.scope=snap.scope||state.scope;
+
+    // Valida sem bloquear F5. Falha de rede não derruba a sessão.
+    api("session",{}, {noRetry:true})
+      .then(r=>{
+        state.user=r.user||state.user;
+        state.modules=r.modules||state.modules;
+        authSnapshotWrite();
+        applyModules();
+        renderProfile();
+      })
+      .catch(e=>{
+        if(/Sessão inválida ou expirada/i.test(String(e?.message||""))){
+          hardLogout();
+          location.reload();
+        }else{
+          console.warn("Validação de sessão em background:",e);
+        }
+      });
+
+    return true;
+  }
+
+  try{
+    const r=await api("session",{}, {noRetry:false});
+    state.user=r.user;
+    state.modules=r.modules||[];
+    authSnapshotWrite();
+    return true;
+  }catch(e){
+    if(/Sessão inválida ou expirada/i.test(String(e?.message||"")))hardLogout();
+    return false;
+  }
 }
 
 function resolveProfilePhotoUrl(url){
@@ -481,7 +654,7 @@ function renderDashboard(d){
 }
 
 
-async function showView(name){qsa(".view").forEach(v=>v.classList.remove("active"));$(name+"View")?.classList.add("active");if(name==="priorities")renderPriorityShell(state.currentPriority||"Identidade");qsa(".nav-button[data-view]").forEach(b=>b.classList.toggle("active",b.dataset.view===name));$("viewTitle").textContent=VIEW_TITLES[name]||name;$("sidebar").classList.remove("open");try{if(name==="priorities")await loadPriorities({background:false});else if(name==="planner")await loadPlanner({background:false});else if(name==="timeline")await loadTimeline({background:false});else if(name==="reports")await loadReports({background:false});else if(name==="requirements")await loadRequirements({background:false});else if(name==="myChurch")await loadMyChurch({background:false});else if(name==="admin")await loadDeveloper({background:false})}catch(e){toast(e.message)}}
+async function showView(name,options={}){qsa(".view").forEach(v=>v.classList.remove("active"));$(name+"View")?.classList.add("active");if(name==="priorities")renderPriorityShell(state.currentPriority||"Identidade");qsa(".nav-button[data-view]").forEach(b=>b.classList.toggle("active",b.dataset.view===name));$("viewTitle").textContent=VIEW_TITLES[name]||name;$("sidebar").classList.remove("open");uiStateWrite();try{if(name==="priorities")await loadPriorities({background:false});else if(name==="planner")await loadPlanner({background:false});else if(name==="timeline")await loadTimeline({background:false});else if(name==="reports")await loadReports({background:false});else if(name==="requirements")await loadRequirements({background:false});else if(name==="myChurch")await loadMyChurch({background:false});else if(name==="admin")await loadDeveloper({background:false})}catch(e){toast(e.message)}}
 function openPriority(area){
   state.currentPriority=area||"Identidade";
   state.selectedRequirementId="";
@@ -526,7 +699,19 @@ async function loadPriorities(options={}){const cached=cacheGet("priorities");if
 function effectiveGoal(req){
   const year=Number(String(state.context.data_inicio||$("yearSingle").value).slice(0,4));const e=(req.metas_efetivas||[]).find(x=>+x.ano===year);return e?num(e.meta):num(req.meta_padrao)
 }
-function reachedFor(reqId){return(state.results||[]).filter(x=>x.requisito_id===reqId).reduce((s,x)=>s+num(x.alcancado),0)}
+function resultRecencyClient_(x){
+  const a=Date.parse(x?.atualizado_em||"");
+  if(Number.isFinite(a))return a;
+  const d=Date.parse(String(x?.data_realizacao||"").slice(0,10));
+  return Number.isFinite(d)?d:0;
+}
+function latestResultFor(reqId){
+  const churchId=selectedChurchId();
+  return (state.results||[])
+    .filter(x=>String(x.requisito_id||"")===String(reqId||"")&&(!churchId||String(x.igreja_id||"")===String(churchId)))
+    .sort((a,b)=>resultRecencyClient_(b)-resultRecencyClient_(a))[0]||null;
+}
+function reachedFor(reqId){return num(latestResultFor(reqId)?.alcancado||0)}
 function renderPriorities(){
   document.documentElement.style.setProperty("--current",AREAS[state.currentPriority]);
   const desc={"Identidade":"Fortalecer a identidade profética da Igreja, as crenças fundamentais e o estilo de vida adventista.","Liderança":"Formar e desenvolver líderes, fortalecendo competências espirituais, administrativas e pastorais.","Novas Gerações":"Integrar crianças, adolescentes e jovens à comunhão, fidelidade, liderança e missão.","Discipulado":"Desenvolver comunhão, relacionamento, missão e multiplicação por meio de uma jornada contínua de discipulado."};
@@ -543,21 +728,28 @@ function renderPriorities(){
 }
 function renderCriterion(){
   const r=state.requirements.find(x=>x.requisito_id===state.selectedRequirementId);if(!r)return;
-  const goal=effectiveGoal(r),reached=reachedFor(r.requisito_id),p=pct(reached,goal),churchId=selectedChurchId(),last=[...state.results].reverse().find(x=>x.requisito_id===r.requisito_id&&(!churchId||x.igreja_id===churchId))||{};
+  const goal=effectiveGoal(r),reached=reachedFor(r.requisito_id),p=pct(reached,goal),churchId=selectedChurchId(),last=latestResultFor(r.requisito_id)||{};
   $("criterionTitleV51").textContent=r.titulo;$("criterionStatusV51").textContent=p>=100?"Concluído":p>=60?"Em andamento":"Atenção";$("criterionDescriptionV51").textContent=r.direcionamento||"—";$("criterionQuestionV51").textContent=r.pergunta||"—";
-  $("actionPlanV51").value=last.plano_acao||"";$("goalInputV51").value=goal;$("reachedInputV51").value=last.alcancado??"";$("responsibleInputV51").value=last.responsavel||"";$("dateInputV51").value=last.data_realizacao||"";$("voteInputV51").value=last.voto||"";$("materialInputV51").value=last.material||"";updateLive();
-  const disabled=!churchId;["actionPlanV51","reachedInputV51","responsibleInputV51","dateInputV51","voteInputV51","materialInputV51","saveCriterionV51"].forEach(id=>$(id).disabled=disabled);$("goalInputV51").disabled=true;$("saveCriterionV51").textContent=disabled?"Selecione uma igreja para editar":"Salvar";
+  $("actionPlanV51").value=last.plano_acao||"";$("goalInputV51").value=goal;$("reachedInputV51").value=last.alcancado??"";$("responsibleInputV51").value=last.responsavel||"";$("dateInputV51").value=last.data_inicial||"";$("dateEndInputV222").value=last.data_final||"";$("voteInputV51").value=last.voto||"";$("materialInputV51").value=last.material||"";updateLive();
+  const disabled=!churchId;["actionPlanV51","reachedInputV51","responsibleInputV51","dateInputV51","dateEndInputV222","voteInputV51","materialInputV51","saveCriterionV51"].forEach(id=>{if($(id))$(id).disabled=disabled});$("goalInputV51").disabled=true;$("saveCriterionV51").textContent=disabled?"Selecione uma igreja para editar":"Salvar";
 }
 function updateLive(){const g=num($("goalInputV51").value),r=num($("reachedInputV51").value),p=pct(r,g);$("livePercentV51").textContent=Math.round(p)+"%";$("liveProgressV51").style.width=p+"%"}
+function recordDateForCurrentPeriod(){
+  const today=localTodayIso();
+  const start=String(state.context?.data_inicio||"").slice(0,10);
+  const end=String(state.context?.data_fim||"").slice(0,10);
+  if(start&&end&&today>=start&&today<=end)return today;
+  return end||start||today;
+}
 async function saveCriterion(){
   const churchId=selectedChurchId();if(!churchId)return toast("Selecione uma igreja.");
   const btn=$("saveCriterionV51");
-  const payload={igreja_id:churchId,requisito_id:state.selectedRequirementId,data_realizacao:$("dateInputV51").value||localTodayIso(),alcancado:num($("reachedInputV51").value),plano_acao:$("actionPlanV51").value,responsavel:$("responsibleInputV51").value,data_inicial:$("dateInputV51").value,voto:$("voteInputV51").value,material:$("materialInputV51").value};
+  const payload={igreja_id:churchId,requisito_id:state.selectedRequirementId,data_realizacao:recordDateForCurrentPeriod(),alcancado:num($("reachedInputV51").value),plano_acao:$("actionPlanV51").value,responsavel:$("responsibleInputV51").value,data_inicial:$("dateInputV51").value,data_final:$("dateEndInputV222").value,voto:$("voteInputV51").value,material:$("materialInputV51").value};
   const previousText=btn.textContent;
   btn.disabled=true;btn.textContent="Salvando...";setSyncState("Salvando resultado","sync");
   // Optimistic UI: reflete o valor imediatamente sem congelar a tela.
   const local={resultado_id:"LOCAL-"+Date.now(),...payload};
-  const idx=state.results.findIndex(x=>String(x.igreja_id)===String(churchId)&&String(x.requisito_id)===String(payload.requisito_id)&&String(x.data_realizacao||"").slice(0,10)===String(payload.data_realizacao).slice(0,10));
+  const targetYear=String(payload.data_realizacao||"").slice(0,4);const idx=state.results.findIndex(x=>String(x.igreja_id)===String(churchId)&&String(x.requisito_id)===String(payload.requisito_id)&&String(x.data_realizacao||"").slice(0,4)===targetYear);
   if(idx>=0)state.results[idx]={...state.results[idx],...local,resultado_id:state.results[idx].resultado_id};else state.results.push(local);
   renderPriorities();
   try{
@@ -636,8 +828,8 @@ async function saveTask(){
     toast(e.message||"Não foi possível salvar a tarefa.");
   }
 }
-async function reauth(){const senha=prompt("Confirme sua senha para continuar:");if(!senha)return false;try{await api("reauth",{senha});return true}catch(e){toast(e.message);return false}}
-async function deleteTask(){if(!await reauth())return;loading(true,"Excluindo tarefa...");try{await api("delete_planner_task",{tarefa_id:$("taskId").value});$("taskModal").classList.remove("open");cacheInvalidate(["planner","timeline"]);await loadPlanner({background:true});toast("Tarefa excluída.")}finally{loading(false)}}
+async function reauth(){const senha=prompt("Confirme sua senha para continuar:");if(!senha)return "";try{const r=await api("reauth",{senha});return String(r.reauth_token||"")}catch(e){toast(e.message);return ""}}
+async function deleteTask(){const reauthToken=await reauth();if(!reauthToken)return;loading(true,"Excluindo tarefa...");try{await api("delete_planner_task",{tarefa_id:$("taskId").value,reauth_token:reauthToken});closeModalById("taskModal");cacheInvalidate(["planner","timeline"]);await loadPlanner({background:true});toast("Tarefa excluída.")}finally{loading(false)}}
 async function loadTimeline(options={}){const cached=cacheGet("timeline");if(cached){state.planner=cached;renderTimeline()}if(!options.background&&!cached)moduleBusy("timelineView",true,"Atualizando linha do tempo...");try{const r=await once(cacheKey("timeline"),()=>api("timeline",currentRequest()));state.planner=r.data||[];cacheSet("timeline",state.planner);renderTimeline();return state.planner}catch(e){if(!cached)throw e;return cached}finally{moduleBusy("timelineView",false)}}
 function renderTimeline(){
   $("timelineList").innerHTML=state.planner.map(t=>{
@@ -852,6 +1044,7 @@ async function saveMyChurch(){
   if(!churchId)return toast("Selecione uma igreja.");
 
   const btn=$("saveChurchProfileButton");
+  const btnBottom=$("saveChurchProfileButtonBottom");
   btn.disabled=true;if(btnBottom)btnBottom.disabled=true;
   btn.textContent="Salvando...";if(btnBottom)btnBottom.textContent="Salvando...";
 
@@ -1443,38 +1636,150 @@ async function openUser(id=""){
   const u=detail||{};$("editingUserId").value=id;$("userModalTitle").textContent=id?"Editar usuário":"Novo usuário";$("userNameInput").value=u.nome||"";$("userRoleInput").value=u.perfil||"Secretário(a)";$("userLoginInput").value=u.login||"";$("userPasswordInput").value="";$("userPhotoInput").value="";$("userPhotoCurrentV20").textContent=u.foto_url?"Foto atual cadastrada ✔️":"Nenhuma foto cadastrada";$("userPhotoCurrentV20").title=u.foto_url||"";$("userActiveInput").value=String(u.ativo!==false);populateUserTerritory(u);
   const modulesBase=(state.developer?.modulos||[]);const permittedIds=new Set(userModules.filter(x=>x.permitido).map(x=>x.modulo_id));
   $("userModulesChecks").innerHTML=modulesBase.map(m=>`<label class="check-v101"><input type="checkbox" value="${m.modulo_id}" ${id?permittedIds.has(m.modulo_id):"checked"}><span>${esc(m.titulo||m.modulo)}</span></label>`).join("");
+  $("deleteUserButtonV222")?.classList.toggle("hidden",!id);$("saveUserButton").textContent="Salvar";
   $("userModal").classList.add("open");
   document.body.classList.add("modal-open-v118");
   const card=$("userModal").querySelector(".user-modal-card");if(card)card.scrollTop=0;
   }catch(e){toast(e.message||"Não foi possível abrir o cadastro de usuário.");console.error(e)}
 }
 async function saveUser(){
-  if(!await reauth())return;
-  const btn=$("saveUserButton");const modulos=qsa("#userModulesChecks input").map(x=>({modulo_id:x.value,permitido:x.checked}));
-  const payload={usuario_id:$("editingUserId").value,nome:$("userNameInput").value.trim(),login:$("userLoginInput").value.trim(),senha:$("userPasswordInput").value,perfil:$("userRoleInput").value,polo_id:$("userPoleInput").value,distrito_id:$("userDistrictInput").value,igreja_id:$("userChurchInput").value,ativo:$("userActiveInput").value==="true",modulos};
-  if(!payload.nome||!payload.login)return toast("Preencha nome e login.");
-  btn.disabled=true;btn.textContent="Salvando...";setSyncState("Salvando usuário","sync");
-  try{
-    const r=await api("save_user_admin",payload);const id=r.usuario_id||payload.usuario_id;
-    const file=$("userPhotoInput").files[0];
-    if(file){const dataUrl=await fileBase64(file);await api("upload_user_photo_admin",{usuario_id:id,nome_arquivo:file.name,mime_type:file.type,arquivo_base64:dataUrl.split(",")[1]},{noRetry:true})}
-    cacheInvalidate("developer");await loadDeveloper({background:true});
-    btn.textContent="Salvo ✔️";if(btnBottom)btnBottom.textContent="Salvo ✔️";toast("Usuário salvo e sincronizado com a Planilha-Mestre.");setSyncState("Conectado","ok");
-    setTimeout(()=>{closeModalById("userModal");btn.textContent="Salvar usuário";btn.disabled=false},700);
-  }catch(e){btn.textContent="Salvar usuário";btn.disabled=false;toast(e.message||"Não foi possível salvar o usuário.");setSyncState("Erro de sincronização","error")}
-}
-function fileBase64(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result));r.onerror=rej;r.readAsDataURL(file)})}
-async function toggleUser(id){if(!await reauth())return;const u=state.users.find(x=>x.usuario_id===id);if(!u)return;setSyncState("Atualizando acesso","sync");try{await api(u.ativo?"deactivate_user_admin":"reactivate_user_admin",{usuario_id:id});cacheInvalidate("developer");await loadDeveloper({background:true});toast("Acesso atualizado.");setSyncState("Conectado","ok")}catch(e){setSyncState("Erro de sincronização","error");toast(e.message)}}
+  const reauthToken=await reauth();
+  if(!reauthToken)return;
 
-function toggleSidebar(){document.body.classList.toggle("sidebar-collapsed");localStorage.setItem("sidebarCollapsed",document.body.classList.contains("sidebar-collapsed")?"1":"0")}
-async function presentation(){try{if(!document.fullscreenElement)await document.documentElement.requestFullscreen();else await document.exitFullscreen()}catch(e){toast("Não foi possível alternar o modo apresentação.")}}
+  const btn=$("saveUserButton");
+  const modulos=qsa("#userModulesChecks input").map(x=>({modulo_id:x.value,permitido:x.checked}));
+  const payload={
+    usuario_id:$("editingUserId").value,
+    nome:$("userNameInput").value.trim(),
+    login:$("userLoginInput").value.trim(),
+    senha:$("userPasswordInput").value,
+    perfil:$("userRoleInput").value,
+    polo_id:$("userPoleInput").value,
+    distrito_id:$("userDistrictInput").value,
+    igreja_id:$("userChurchInput").value,
+    ativo:$("userActiveInput").value==="true",
+    modulos
+  };
+
+  if(!payload.nome||!payload.login)return toast("Preencha nome e login.");
+
+  btn.disabled=true;
+  btn.textContent="Salvando...";
+  setSyncState("Salvando usuário","sync");
+
+  try{
+    const r=await api("save_user_admin",payload);
+    const id=r.usuario_id||payload.usuario_id;
+
+    const file=$("userPhotoInput").files[0];
+    if(file){
+      const dataUrl=await fileBase64(file);
+      await api("upload_user_photo_admin",{
+        usuario_id:id,
+        nome_arquivo:file.name,
+        mime_type:file.type,
+        arquivo_base64:dataUrl.split(",")[1]
+      },{noRetry:true});
+    }
+
+    cacheInvalidate("developer");
+    await loadDeveloper({background:true});
+    btn.textContent="Salvo ✔️";
+    toast("Usuário salvo e sincronizado com a Planilha-Mestre.");
+    setSyncState("Conectado","ok");
+
+    // Fecha automaticamente após confirmação da gravação.
+    setTimeout(()=>closeModalById("userModal"),250);
+  }catch(e){
+    btn.textContent="Salvar";
+    toast(e.message||"Não foi possível salvar o usuário.");
+    setSyncState("Erro de sincronização","error");
+  }finally{
+    btn.disabled=false;
+    if(btn.textContent!=="Salvo ✔️")btn.textContent="Salvar";
+  }
+}
+
+async function deleteUserV222(){
+  const id=$("editingUserId")?.value||"";
+  if(!id)return toast("Nenhum usuário selecionado.");
+
+  const target=state.users.find(x=>String(x.usuario_id)===String(id));
+  if(!confirm(`Excluir definitivamente o usuário "${target?.nome||id}"?`))return;
+
+  const reauthToken=await reauth();
+  if(!reauthToken)return;
+
+  const btn=$("deleteUserButtonV222");
+  if(btn){btn.disabled=true;btn.textContent="Excluindo..."}
+
+  try{
+    await api("delete_user_admin",{usuario_id:id,reauth_token:reauthToken},{noRetry:true});
+    closeModalById("userModal");
+    cacheInvalidate("developer");
+    await loadDeveloper({background:true});
+    toast("Usuário excluído ✔️");
+  }catch(e){
+    toast(e.message||"Não foi possível excluir o usuário.");
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent="Excluir usuário"}
+  }
+}
+
+function fileBase64(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result));r.onerror=rej;r.readAsDataURL(file)})}
+async function toggleUser(id){
+  const reauthToken=await reauth();
+  if(!reauthToken)return;
+  const u=state.users.find(x=>x.usuario_id===id);
+  if(!u)return;
+
+  setSyncState("Atualizando acesso","sync");
+  try{
+    await api(u.ativo?"deactivate_user_admin":"reactivate_user_admin",{
+      usuario_id:id,
+      reauth_token:reauthToken
+    });
+    cacheInvalidate("developer");
+    await loadDeveloper({background:true});
+    toast("Acesso atualizado.");
+    setSyncState("Conectado","ok");
+  }catch(e){
+    setSyncState("Erro de sincronização","error");
+    toast(e.message);
+  }
+}
+
+function toggleSidebar(){
+  document.body.classList.toggle("sidebar-collapsed");
+  localStorage.setItem("sidebarCollapsed",document.body.classList.contains("sidebar-collapsed")?"1":"0");
+}
+async function presentation(){
+  try{
+    if(!document.fullscreenElement)await document.documentElement.requestFullscreen();
+    else await document.exitFullscreen();
+  }catch(e){toast("Não foi possível alternar o modo apresentação.")}
+}
 let deferredPrompt=null;
 function setupPWA(){
   window.addEventListener("beforeinstallprompt",e=>{e.preventDefault();deferredPrompt=e});
   const install=$("installButton");
-  if(install)install.onclick=async()=>{if(deferredPrompt){deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null}else $("installHelpModal")?.classList.add("open")};
-  if("serviceWorker"in navigator)navigator.serviceWorker.register("./service-worker.js",{scope:"./"}).catch(console.warn)
+  if(install)install.onclick=async()=>{
+    if(deferredPrompt){deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null}
+    else $("installHelpModal")?.classList.add("open")
+  };
+  if("serviceWorker" in navigator)navigator.serviceWorker.register("./service-worker.js",{scope:"./"}).catch(console.warn);
 }
+
+function closeModalById(id){
+  const modal=$(id);
+  if(!modal)return;
+  modal.classList.remove("open");
+  if(id==="userModal"){
+    document.body.classList.remove("modal-open-v118");
+    if($("saveUserButton"))$("saveUserButton").textContent="Salvar";
+  }
+}
+
 function bindReportAIDelegation(){
   document.addEventListener("click",e=>{
     const ai=e.target.closest("#aiReportButton");
@@ -1506,38 +1811,95 @@ function bindAdminDelegation(){
   });
 }
 function bind(){
-  $("loginButton").onclick=login;["loginEmail","loginCode"].forEach(id=>$(id).addEventListener("keydown",e=>{if(e.key==="Enter")login()}));$("logoutButton").onclick=logout;
-  qsa(".nav-button[data-view]").forEach(b=>b.onclick=()=>showView(b.dataset.view));$("prioritiesToggle").onclick=()=>$("prioritySubmenu").classList.toggle("open");qsa("[data-priority]").forEach(b=>b.onclick=()=>openPriority(b.dataset.priority));
-  $("poleFilter").onchange=()=>{fillDistricts();fillChurches()};$("districtFilter").onchange=fillChurches;$("periodMode").onchange=updatePeriodVisibility;$("applyFiltersButton").onclick=applyFilters;$("refreshButton").onclick=hardRefresh;
-  $("sidebarLogoButton").onclick=toggleSidebar;$("mobileMenu").onclick=()=>$("sidebar").classList.toggle("open");$("presentationButton").onclick=presentation;
-  $("criteriaStatusFilter").onchange=renderPriorities;["goalInputV51","reachedInputV51"].forEach(id=>$(id).oninput=updateLive);$("saveCriterionV51").onclick=saveCriterion;
-  $("newTaskButton").onclick=()=>openTaskModal();$("saveTask").onclick=saveTask;$("deleteTask").onclick=deleteTask;
-  $("newRequirementButton").onclick=()=>openRequirement();$("saveRequirementButton").onclick=saveRequirement;$("requirementSearch").oninput=renderRequirements;$("saveGoalButton").onclick=saveGoal;$("resetGoalButton").onclick=resetGoal;
-  $("saveChurchProfileButton").onclick=saveMyChurch;$("saveChurchProfileButtonBottom").onclick=saveMyChurch;
-  $("printAiReportButton").onclick=()=>printReportObject(state.currentReport||state.reports[0]);$("shareAiReportButton").onclick=()=>openWhatsAppApp(state.currentReport?.resumo_whatsapp||state.currentAiReport);$("whatsappButton").onclick=whatsappSummary;$("excelButton").onclick=exportCSV;$("pdfButton").onclick=()=>printReportObject(state.currentReport||state.reports[0]);$("emailButton").onclick=()=>toast("Envio por e-mail será conectado em atualização posterior.");$("saveEditedReportButton").onclick=saveEditedReport;
+  bindClick("loginButton",login);
+  ["loginEmail","loginCode"].forEach(id=>{
+    const el=$(id);if(el)el.addEventListener("keydown",e=>{if(e.key==="Enter")login()});
+  });
+  bindClick("logoutButton",logout);
+
+  qsa(".nav-button[data-view]").forEach(b=>b.onclick=()=>showView(b.dataset.view));
+  bindClick("prioritiesToggle",()=>$("prioritySubmenu")?.classList.toggle("open"));
+  qsa("[data-priority]").forEach(b=>b.onclick=()=>openPriority(b.dataset.priority));
+
+  bindChange("poleFilter",()=>{fillDistricts();fillChurches();uiStateWrite()});
+  bindChange("districtFilter",()=>{fillChurches();uiStateWrite()});
+  bindChange("churchFilter",uiStateWrite);
+  bindChange("periodMode",()=>{updatePeriodVisibility();uiStateWrite()});
+  ["yearSingle","monthSingle","yearStart","yearEnd","monthStart","monthEnd","dateStart","dateEnd"]
+    .forEach(id=>bindChange(id,uiStateWrite));
+  bindClick("applyFiltersButton",applyFilters);
+
+  bindClick("sidebarLogoButton",toggleSidebar);
+  bindClick("mobileMenu",()=>$("sidebar")?.classList.toggle("open"));
+  bindClick("presentationButton",presentation);
+
+  bindChange("criteriaStatusFilter",renderPriorities);
+  ["goalInputV51","reachedInputV51"].forEach(id=>bindInput(id,updateLive));
+  bindClick("saveCriterionV51",saveCriterion);
+
+  bindClick("newTaskButton",()=>openTaskModal());
+  bindClick("saveTask",saveTask);
+  bindClick("deleteTask",deleteTask);
+
+  bindClick("newRequirementButton",()=>openRequirement());
+  bindClick("saveRequirementButton",saveRequirement);
+  bindInput("requirementSearch",renderRequirements);
+  bindClick("saveGoalButton",saveGoal);
+  bindClick("resetGoalButton",resetGoal);
+
+  bindClick("saveChurchProfileButton",saveMyChurch);
+  bindClick("saveChurchProfileButtonBottom",saveMyChurch);
+
+  bindClick("printAiReportButton",()=>printReportObject(state.currentReport||state.reports[0]));
+  bindClick("shareAiReportButton",()=>openWhatsAppApp(state.currentReport?.resumo_whatsapp||state.currentAiReport));
+  bindClick("whatsappButton",whatsappSummary);
+  bindClick("excelButton",exportCSV);
+  bindClick("pdfButton",()=>printReportObject(state.currentReport||state.reports[0]));
+  bindClick("emailButton",()=>toast("Envio por e-mail será conectado em atualização posterior."));
+  bindClick("saveEditedReportButton",saveEditedReport);
+
   qsa("[data-report-area]").forEach(b=>b.onclick=()=>showReportArea(b.dataset.reportArea));
   qsa("[data-fofa-axis]").forEach(b=>b.onclick=()=>{state.fofaAxis=b.dataset.fofaAxis;renderFofa()});
-  $("startFofaButton").onclick=startFofa;
-  $("confirmStartFofaButton").onclick=confirmStartFofa;
-  $("concludeFofaButton").onclick=concludeFofa;
-  $("saveUserButton").onclick=saveUser;$("userSearch").oninput=renderUsers;$("rankingLevel").onchange=()=>{cacheInvalidate("dashboard");loadDashboard({background:true}).catch(e=>toast(e.message));};$("rankingLimitV20").onchange=()=>{if(state.dashboard)renderDashboard(state.dashboard);};bindAdminDelegation();bindReportAIDelegation();
-  
-  if($("closeInstallHelpButton"))$("closeInstallHelpButton").onclick=()=>$("installHelpModal").classList.remove("open");
+  bindClick("startFofaButton",startFofa);
+  bindClick("confirmStartFofaButton",confirmStartFofa);
+  bindClick("concludeFofaButton",concludeFofa);
+
+  bindClick("saveUserButton",saveUser);
+  bindClick("deleteUserButtonV222",deleteUserV222);
+  bindInput("userSearch",renderUsers);
+
+  bindChange("rankingLevel",()=>{
+    cacheInvalidate("dashboard");
+    setSyncState("Atualizando ranking","sync");
+    loadDashboard({background:true})
+      .then(()=>setSyncState("Conectado","ok"))
+      .catch(e=>{setSyncState("Erro de sincronização","error");toast(e.message)});
+  });
+  bindChange("rankingLimitV20",()=>{
+    if(state.dashboard)renderDashboard(state.dashboard);
+  });
+
+  bindAdminDelegation();
+  bindReportAIDelegation();
+
+  if($("closeInstallHelpButton")){
+    $("closeInstallHelpButton").onclick=()=>$("installHelpModal")?.classList.remove("open");
+  }
+
+  window.addEventListener("beforeunload",uiStateWrite);
 }
 async function init(){
   setupPeriod();
   bind();
   setupPWA();
 
-  // A R7 muda a estrutura do bootstrap.
-  // Limpa somente caches técnicos antigos; não apaga o token de sessão.
-  if(localStorage.getItem("prioridades_cache_schema")!=="9"){
+  if(localStorage.getItem("prioridades_cache_schema")!=="10"){
     [
       "bootstrap","dashboard","priorities","planner",
       "timeline","reports","requirements","myChurch","developer"
     ].forEach(name=>localStorage.removeItem(`prioridades_cache_${name}`));
 
-    localStorage.setItem("prioridades_cache_schema","9");
+    localStorage.setItem("prioridades_cache_schema","10");
     cacheInvalidate();
   }
 
@@ -1550,12 +1912,23 @@ async function init(){
     applyModules();
     renderProfile();
 
-    // Sessão restaurada precisa apenas recuperar o escopo.
-    // O bootstrap do servidor é leve e não calcula Dashboard.
-    bootstrap({background:true}).catch(e=>{
-      setSyncState("Erro de sincronização","error");
-      toast(e.message);
-    });
+    // Com snapshot, F5 retorna imediatamente à tela anterior.
+    if(state.scope?.igrejas?.length||state.scope?.distritos?.length||state.scope?.polos?.length){
+      setupTerritory();
+      restoreUiControls();
+      await restoreUiView();
+    }
+
+    bootstrap({background:true})
+      .then(async()=>{
+        authSnapshotWrite();
+        restoreUiControls();
+        await restoreUiView();
+      })
+      .catch(e=>{
+        setSyncState("Erro de sincronização","error");
+        toast(e.message);
+      });
   }
 }
 document.addEventListener("DOMContentLoaded",init);
