@@ -14,7 +14,7 @@ let state={
   user:null,modules:[],scope:{polos:[],distritos:[],igrejas:[],filtros:{}},
   context:{polo_id:"",distrito_id:"",igreja_id:"",data_inicio:"",data_fim:""},
   dashboard:null,requirements:[],results:[],planner:[],reports:[],difficulties:[],
-  fofaItems:[],fofaEvaluations:[],fofaHistory:[],fofaCurrent:null,fofaAxis:"Identidade",fofaSmart:null,
+  fofaItems:[],fofaEvaluations:[],fofaHistory:[],fofaCurrent:null,fofaAxis:"Identidade",fofaSmart:null,fofaCatalog:{},fofaCompletion:null,
   churchProfile:null,departments:[],churchFormDirty:false,users:[],developer:null,
   currentPriority:"Identidade",selectedRequirementId:"",currentAiReport:"",currentReport:null,editingReportId:""
 };
@@ -885,7 +885,7 @@ function showReportArea(area){
 async function loadFofa(options={}){
   const churchId=selectedChurchId();
   if(!churchId){
-    state.fofaItems=[];state.fofaEvaluations=[];state.fofaCurrent=null;state.fofaProgress=null;state.fofaSmart=null;
+    state.fofaItems=[];state.fofaEvaluations=[];state.fofaCurrent=null;state.fofaProgress=null;state.fofaSmart=null;state.fofaCatalog={};state.fofaCompletion=null;
     renderFofa();
     return;
   }
@@ -894,6 +894,8 @@ async function loadFofa(options={}){
   state.fofaEvaluations=Array.isArray(ws.evaluations)?ws.evaluations:[];
   state.fofaCurrent=ws.current||null;
   state.fofaSmart=ws.smart_diagnostic||null;
+  state.fofaCatalog=ws.catalog||{};
+  state.fofaCompletion=ws.completion||state.fofaCurrent?.completion||null;
   state.fofaProgress=ws.progress||{total:state.fofaItems.length,answered:0,axis_totals:{},axis_answered:{}};
   renderFofa();
 }
@@ -904,11 +906,23 @@ function fofaResponseMap(){
 }
 
 
-function fofaSmartFactorOptions(axis,type,selectedId=""){
-  const key=v=>String(v??"").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
-  const rows=(state.fofaItems||[]).filter(x=>key(x.eixo)===key(axis)&&key(x.tipo_fofa)===key(type));
-  return '<option value="">Selecione o fator FOFA...</option>'+rows.map(x=>
-    `<option value="${esc(x.fofa_item_id)}" ${String(x.fofa_item_id)===String(selectedId)?"selected":""}>${esc(x.fator)}</option>`
+function fofaSmartFactorOptions(axis,type,selectedId="",candidates=[]){
+  const key=v=>String(v??"").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g," ");
+  let rows=Array.isArray(candidates)&&candidates.length?candidates:[];
+  if(!rows.length){
+    rows=(state.fofaCatalog?.[axis]?.[type]||[]);
+  }
+  if(!rows.length){
+    rows=(state.fofaItems||[]).filter(x=>key(x.eixo)===key(axis)&&key(x.tipo_fofa)===key(type));
+  }
+  const seen=new Set();
+  rows=rows.filter(x=>{
+    const id=String(x.fofa_item_id||"");
+    if(!id||seen.has(id))return false;
+    seen.add(id);return true;
+  });
+  return '<option value="">Selecione o fator FOFA...</option>'+rows.map((x,i)=>
+    `<option value="${esc(x.fofa_item_id)}" ${String(x.fofa_item_id)===String(selectedId)?"selected":""}>${i===0&&Number(x.similaridade||0)>0?"★ ":""}${esc(x.fator)}</option>`
   ).join("");
 }
 
@@ -938,8 +952,8 @@ function renderFofaSmartDiagnostic(){
       <span>Atingimento <b>${percent(r.percentual||0)}</b></span><span>Gap <b>${fmt(r.gap||0)}</b></span></div>
       <p>${esc(r.evidencia_sugerida||"")}</p>
       ${type?`<div class="fofa-smart-apply-v21r2">
-        <label><span>Vincular ao fator FOFA</span><select data-smart-target>${fofaSmartFactorOptions(r.prioridade,type,r.fofa_item_sugerido_id||"")}</select></label>
-        <label><span>Nota sugerida</span><select data-smart-note>${[1,2,3,4,5].map(n=>`<option value="${n}" ${Number(r.nota_sugerida)===n?"selected":""}>${n}</option>`).join("")}</select></label>
+        <label><span>Vincular ao fator FOFA · ${(r.fatores_compativeis||[]).length} opção(ões)</span><select data-smart-target>${fofaSmartFactorOptions(r.prioridade,type,r.fofa_item_sugerido_id||"",r.fatores_compativeis||[])}</select></label>
+        <label><span>Nota sugerida · baseada no atingimento</span><select data-smart-note>${[1,2,3,4,5].map(n=>`<option value="${n}" ${Number(r.nota_sugerida)===n?"selected":""}>${n}</option>`).join("")}</select></label>
         <button data-apply-smart="${esc(r.requisito_id)}" ${canApply?"":"disabled"}>${canApply?"Aplicar na FOFA":"Inicie uma avaliação"}</button>
       </div>`:`<div class="fofa-smart-no-meta-v21r2">Configure uma meta para habilitar a sugestão automática.</div>`}
     </article>`;
@@ -974,7 +988,7 @@ async function applyFofaSmartSuggestion(requirementId){
   if(!card||!state.fofaCurrent?.evaluation?.avaliacao_id)return toast("Inicie uma avaliação FOFA.");
   const target=card.querySelector("[data-smart-target]")?.value||"";
   const note=card.querySelector("[data-smart-note]")?.value||"";
-  if(!target)return toast("Selecione o fator FOFA que receberá esta evidência.");
+  if(!target)return toast("Selecione um fator FOFA. A lista deve exibir fatores do mesmo eixo e do tipo sugerido.");
   const btn=card.querySelector("[data-apply-smart]"); btn.disabled=true; btn.textContent="Aplicando...";
   try{
     await api("apply_fofa_smart_suggestion",{...currentRequest(),
@@ -982,6 +996,33 @@ async function applyFofaSmartSuggestion(requirementId){
     toast("Evidência aplicada à FOFA ✔️"); await loadFofa({background:true});
   }catch(e){toast(e.message||"Não foi possível aplicar a sugestão.")}
   finally{btn.disabled=false}
+}
+
+
+
+function renderFofaReadingStatus(){
+  const c=state.fofaCompletion||state.fofaCurrent?.completion||{};
+  const host=$("fofaReadingStatus");
+  if(!host)return;
+  if(!state.fofaCurrent){
+    host.innerHTML='<div class="fofa-reading-empty-v22">Inicie uma avaliação para acompanhar a leitura completa da Matriz FOFA.</div>';
+    return;
+  }
+  const axes=["Identidade","Liderança","Novas Gerações","Discipulado"];
+  const types=["Força","Fraqueza","Oportunidade","Ameaça"];
+  host.innerHTML=`<div class="fofa-reading-head-v22">
+      <div><p class="eyebrow">LEITURA DA MATRIZ</p><h3>${c.pronto_para_concluir?"Avaliação apta para conclusão":"Avaliação em construção"}</h3>
+      <p>${esc(c.regra||"")}</p></div>
+      <span class="fofa-ready-badge-v22 ${c.pronto_para_concluir?"ready":"pending"}">${c.pronto_para_concluir?"✓ Pronta":"Em avaliação"}</span>
+    </div>
+    <div class="fofa-reading-grid-v22">
+      ${axes.map(x=>`<div><span>${esc(x)}</span><strong>${Number(c.por_eixo?.[x]||0)}</strong><small>resposta(s)</small></div>`).join("")}
+      ${types.map(x=>`<div><span>${esc(x)}</span><strong>${Number(c.por_tipo?.[x]||0)}</strong><small>resposta(s)</small></div>`).join("")}
+    </div>
+    ${(!c.pronto_para_concluir)?`<div class="fofa-reading-pending-v22">
+      ${c.eixos_pendentes?.length?`<span>Prioridades pendentes: <b>${esc(c.eixos_pendentes.join(", "))}</b></span>`:""}
+      ${c.quadrantes_pendentes?.length?`<span>Quadrantes pendentes: <b>${esc(c.quadrantes_pendentes.join(", "))}</b></span>`:""}
+    </div>`:""}`;
 }
 
 
@@ -1010,6 +1051,7 @@ function renderFofa(){
   }
 
   renderFofaSmartDiagnostic();
+  renderFofaReadingStatus();
   qsa("[data-fofa-axis]").forEach(b=>b.classList.toggle("active",b.dataset.fofaAxis===state.fofaAxis));
   const responseMap=fofaResponseMap();
   const textKey=v=>String(v??"").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g," ");
@@ -1092,7 +1134,14 @@ async function concludeFofa(){
   if(!state.fofaCurrent?.evaluation?.avaliacao_id)return;
   const answered=Number(state.fofaProgress?.answered||0),total=Number(state.fofaProgress?.total||state.fofaItems.length||0);
   if(!answered)return toast("Avaliação vazia. Registre respostas antes de concluir.");
-  if(!confirm(`Concluir esta avaliação FOFA? ${answered} de ${total} critérios possuem resposta. Os índices serão consolidados.`))return;
+  const c=state.fofaCompletion||state.fofaCurrent?.completion||{};
+  if(c.pronto_para_concluir===false){
+    const parts=[];
+    if(c.eixos_pendentes?.length)parts.push("Prioridades: "+c.eixos_pendentes.join(", "));
+    if(c.quadrantes_pendentes?.length)parts.push("Quadrantes: "+c.quadrantes_pendentes.join(", "));
+    return toast("Avaliação incompleta. "+parts.join(" | "));
+  }
+  if(!confirm(`Concluir esta avaliação FOFA? ${answered} de ${total} critérios possuem resposta. Os índices e a classificação serão consolidados.`))return;
   try{
     const r=await api("conclude_fofa_evaluation",{avaliacao_id:state.fofaCurrent.evaluation.avaliacao_id});
     toast(`FOFA concluída · Índice geral ${percent(r.indice_geral||0)}`);
