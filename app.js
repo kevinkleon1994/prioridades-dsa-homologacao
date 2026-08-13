@@ -177,10 +177,26 @@ async function restore(){
   if(!state.token)return false;
   try{const r=await api("session");state.user=r.user;state.modules=r.modules||[];return true}catch(e){hardLogout();return false}
 }
+
+function resolveProfilePhotoUrl(url){
+  const raw=String(url||'').trim();
+  if(!raw)return "assets/icone_192.png";
+  const m=raw.match(/[?&]id=([^&]+)/) || raw.match(/\/d\/([^/]+)/);
+  if(m&&m[1])return "https://drive.google.com/thumbnail?id="+encodeURIComponent(m[1])+"&sz=w256";
+  return raw;
+}
+function applyProfilePhoto(){
+  const img=$("profilePhoto");
+  if(!img)return;
+  img.onerror=()=>{img.onerror=null;img.src="assets/icone_192.png"};
+  img.referrerPolicy="no-referrer";
+  img.src=resolveProfilePhotoUrl(state.user?.foto_url);
+}
+
 function startApp(){
   $("loginScreen").classList.add("hidden");$("appRoot").classList.remove("hidden");
   $("profileName").textContent=state.user?.nome||"Usuário";$("profileRole").textContent=state.user?.perfil||"";
-  $("profilePhoto").src=state.user?.foto_url||"assets/icone_192.png";
+  applyProfilePhoto();
   applyModules();
 }
 function applyModules(){
@@ -292,7 +308,7 @@ function schedulePrefetchCoreModules(){
 
 function renderProfile(){
   $("profileName").textContent=state.user?.nome||"";$("profileRole").textContent=state.user?.perfil||"";
-  $("profilePhoto").src=state.user?.foto_url||"assets/icone_192.png";
+  applyProfilePhoto();
 setupRankingFilter();
 }
 function setupTerritory(){
@@ -329,7 +345,13 @@ function updatePeriodVisibility(){
   Object.entries(show).forEach(([id,on])=>$(id).classList.toggle("hidden-v111",!on));
 }
 function renderContext(){
-  const c=selectedChurch(),d=(state.scope.distritos||[]).find(x=>x.distrito_id===currentRequest().distrito_id),p=(state.scope.polos||[]).find(x=>x.polo_id===currentRequest().polo_id);
+  const req=currentRequest();
+  const c=selectedChurch();
+  let d=(state.scope.distritos||[]).find(x=>x.distrito_id===req.distrito_id);
+  if(!d&&c?.distrito_id)d=(state.scope.distritos||[]).find(x=>x.distrito_id===c.distrito_id);
+  let p=(state.scope.polos||[]).find(x=>x.polo_id===req.polo_id);
+  if(!p&&d?.polo_id)p=(state.scope.polos||[]).find(x=>x.polo_id===d.polo_id);
+
   const names=[window.APP_CONFIG.FIELD,p?.polo,d?.distrito,c?.igreja].filter(Boolean);
   $("fieldContext").textContent=names.join(" · ").toUpperCase();
   $("contextText").textContent=`${c?.igreja||d?.distrito||p?.polo||window.APP_CONFIG.FIELD} · ${formatDateBR(state.context.data_inicio)} a ${formatDateBR(state.context.data_fim)}`;
@@ -754,16 +776,16 @@ function effectiveMyChurchId(){
 
 function setChurchSaveState(dirty){
   state.churchFormDirty=!!dirty;
-  const btn=$("saveChurchProfileButton");
+  const btn=$("saveChurchProfileButton");const btnBottom=$("saveChurchProfileButtonBottom");
   if(!btn)return;
 
   if(state.churchFormDirty){
     btn.disabled=false;
-    btn.textContent="Salvar Informações";
+    btn.textContent="Salvar Informações";if(btnBottom)btnBottom.textContent="Salvar Informações";
     btn.classList.remove("saved-state-r6");
   }else{
     btn.disabled=false;
-    btn.textContent="Salvo ✔️";
+    btn.textContent="Salvo ✔️";if(btnBottom)btnBottom.textContent="Salvo ✔️";
     btn.classList.add("saved-state-r6");
   }
 }
@@ -812,16 +834,16 @@ function plannerChurchOptions(selectedId=""){
 
 async function loadMyChurch(options={}){const id=effectiveMyChurchId(),extra=id||"none",cached=cacheGet("myChurch",extra);if(cached){state.churchProfile=cached.profile||null;state.departments=cached.departments||[];renderMyChurch(cached)}if(!options.background&&!cached)moduleBusy("myChurchView",true,"Atualizando igreja...");try{const r=await once(cacheKey("myChurch",extra),()=>api("get_my_church",{igreja_id:id}));state.churchProfile=r.profile||null;state.departments=r.departments||[];cacheSet("myChurch",r,extra);renderMyChurch(r);return r}catch(e){if(!cached)throw e;return cached}finally{moduleBusy("myChurchView",false)}}
 function renderMyChurch(r={}){
-  const p=state.churchProfile||{};$("churchProfileName").textContent=p.igreja||"Selecione uma igreja";const disabled=!p.igreja_id;$("churchEldersInput").value=p.quantidade_anciaos||0;$("churchFamiliesInput").value=p.quantidade_familias||0;$("churchUapgsInput").value=p.quantidade_uapgs||0;$("churchFirstElderInput").value=p.primeiro_anciao_diretor||"";$("churchFirstElderPhoneInput").value=p.contato_primeiro_anciao_diretor||"";$("churchAddressInput").value=p.endereco||"";$("churchEmailInput").value=p.email||"";$("churchNotesInput").value=p.observacoes||"";
+  const p=state.churchProfile||{};$("churchProfileName").textContent=p.igreja||"Selecione uma igreja";const disabled=!p.igreja_id;$("churchEldersInput").value=p.quantidade_anciaos||0;$("churchFamiliesInput").value=p.quantidade_familias||0;$("churchUapgsInput").value=p.quantidade_uapgs||0;$("churchFirstElderInput").value=p.primeiro_anciao_diretor||"";$("churchFirstElderPhoneInput").value=p.contato_primeiro_anciao_diretor||"";$("churchAddressInput").value=p.endereco||"";$("churchNotesInput").value=p.observacoes||"";
   $("churchOfficersChecks").innerHTML=(state.departments||[]).map(d=>`<label class="dept-item-v111"><input type="checkbox" data-dept="${d.departamento_id}" ${d.tem_lider?"checked":""}><span><strong>${esc(d.departamento)}</strong><input type="text" data-dept-name="${d.departamento_id}" value="${esc(d.nome_lider||"")}" placeholder="Nome do líder"></span></label>`).join("");
-  ["churchEldersInput","churchFamiliesInput","churchUapgsInput","churchFirstElderInput","churchFirstElderPhoneInput","churchAddressInput","churchEmailInput","churchNotesInput","saveChurchProfileButton"].forEach(id=>$(id).disabled=disabled);
+  ["churchEldersInput","churchFamiliesInput","churchUapgsInput","churchFirstElderInput","churchFirstElderPhoneInput","churchAddressInput","churchNotesInput","saveChurchProfileButton","saveChurchProfileButtonBottom"].forEach(id=>$(id).disabled=disabled);
 
   bindChurchDirtyTracking();
 
   if(!disabled){
     setChurchSaveState(false);
   }else{
-    const btn=$("saveChurchProfileButton");
+    const btn=$("saveChurchProfileButton");const btnBottom=$("saveChurchProfileButtonBottom");
     btn.textContent="Selecione uma igreja";
   }
 }
@@ -830,8 +852,8 @@ async function saveMyChurch(){
   if(!churchId)return toast("Selecione uma igreja.");
 
   const btn=$("saveChurchProfileButton");
-  btn.disabled=true;
-  btn.textContent="Salvando...";
+  btn.disabled=true;if(btnBottom)btnBottom.disabled=true;
+  btn.textContent="Salvando...";if(btnBottom)btnBottom.textContent="Salvando...";
 
   try{
     await api("save_my_church",{
@@ -842,7 +864,6 @@ async function saveMyChurch(){
       primeiro_anciao_diretor:$("churchFirstElderInput").value,
       contato_primeiro_anciao_diretor:$("churchFirstElderPhoneInput").value,
       endereco:$("churchAddressInput").value,
-      email:$("churchEmailInput").value,
       observacoes:$("churchNotesInput").value
     });
 
@@ -869,7 +890,7 @@ async function saveMyChurch(){
     setChurchSaveState(true);
     toast(e.message||"Não foi possível salvar as informações.");
   }finally{
-    btn.disabled=false;
+    btn.disabled=false;if(btnBottom)btnBottom.disabled=false;
   }
 }
 
@@ -1164,22 +1185,95 @@ function renderFofaHistory(){
     const e=x.avaliacao||{},i=x.indices||{};
     return `<article class="fofa-history-card-v21">
       <div><strong>${esc(e.tipo_ciclo||"Avaliação FOFA")}</strong><span>${esc(e.status||"")} · ${formatDateBR(e.data_inicio)}${e.data_conclusao?` → ${formatDateBR(e.data_conclusao)}`:""}</span></div>
-      <div class="fofa-history-indices-v21"><span>🔴 ${percent(i.Identidade||0)}</span><span>🔵 ${percent(i.Liderança||0)}</span><span>🟡 ${percent(i["Novas Gerações"]||0)}</span><span>🟢 ${percent(i.Discipulado||0)}</span><strong>Geral ${percent(x.indice_geral||0)}</strong></div>
+      <div class="fofa-history-side-v221"><div class="fofa-history-indices-v21"><span>🔴 ${percent(i.Identidade||0)}</span><span>🔵 ${percent(i.Liderança||0)}</span><span>🟡 ${percent(i["Novas Gerações"]||0)}</span><span>🟢 ${percent(i.Discipulado||0)}</span><strong>Geral ${percent(x.indice_geral||0)}</strong></div>
+      <div class="fofa-history-actions-v221"><button data-fofa-view="${e.avaliacao_id}">Visualizar</button><button data-fofa-pdf="${e.avaliacao_id}">PDF</button><button data-fofa-wa="${e.avaliacao_id}">WhatsApp</button><button data-fofa-edit="${e.avaliacao_id}">Editar</button></div></div>
     </article>`;
   }).join("")||'<div class="empty-v111">Nenhum ciclo FOFA registrado.</div>';
+  qsa("[data-fofa-view]").forEach(b=>b.onclick=()=>openFofaHistoryDetail(b.dataset.fofaView,false));
+  qsa("[data-fofa-pdf]").forEach(b=>b.onclick=()=>openFofaHistoryDetail(b.dataset.fofaPdf,true));
+  qsa("[data-fofa-wa]").forEach(b=>b.onclick=()=>shareFofaHistory(b.dataset.fofaWa));
+  qsa("[data-fofa-edit]").forEach(b=>b.onclick=()=>editFofaHistory(b.dataset.fofaEdit));
+}
+
+
+function fofaSummaryMarkdown(detail){
+  const e=detail?.evaluation||{},i=detail?.indices||{},responses=detail?.responses||[];
+  const groups=["Força","Fraqueza","Oportunidade","Ameaça"].map(type=>{
+    const rows=responses.filter(r=>String(r.tipo_fofa||"")===type);
+    return `## ${type}\n`+(rows.length?rows.map(r=>`- **${r.eixo}** — ${r.fator||r.fofa_item_id}: nota ${r.nota||0}${r.evidencia?` — ${r.evidencia}`:""}`).join("\n"):"- Nenhum registro.");
+  }).join("\n\n");
+  return `# Matriz FOFA Estratégica\n\n**Ciclo:** ${e.tipo_ciclo||"Avaliação FOFA"}\n**Status:** ${e.status||""}\n**Período:** ${formatDateBR(e.data_inicio)} a ${formatDateBR(e.data_conclusao||e.data_fim||e.data_inicio)}\n\n## Índices\n- Identidade: ${percent(i.Identidade||0)}\n- Liderança: ${percent(i.Liderança||0)}\n- Novas Gerações: ${percent(i["Novas Gerações"]||0)}\n- Discipulado: ${percent(i.Discipulado||0)}\n- Geral: ${percent(detail?.indice_geral||0)}\n\n${groups}`;
+}
+async function openFofaHistoryDetail(id,printNow=false){
+  try{
+    const r=await api("get_fofa_evaluation",{avaliacao_id:id});
+    const d=r.data||r;
+    const md=fofaSummaryMarkdown(d);
+    if(printNow){
+      printStandaloneContent(`Matriz FOFA — ${selectedChurch()?.igreja||"Igreja"}`,md);
+      return;
+    }
+    state.currentAiReport=md;state.currentReport=null;
+    $("aiReportTitle").textContent=`Matriz FOFA — ${selectedChurch()?.igreja||"Igreja"}`;
+    $("aiReportContext").textContent=`${d.evaluation?.tipo_ciclo||"Avaliação FOFA"} · ${d.evaluation?.status||""}`;
+    $("aiReportContent").innerHTML=markdownToHtml(md);
+    $("aiReportModal").classList.add("open");
+  }catch(e){toast(e.message||"Não foi possível visualizar a avaliação FOFA.")}
+}
+async function shareFofaHistory(id){
+  try{
+    const r=await api("get_fofa_evaluation",{avaliacao_id:id});
+    openWhatsAppApp(fofaSummaryMarkdown(r.data||r));
+  }catch(e){toast(e.message||"Não foi possível compartilhar a avaliação FOFA.")}
+}
+async function editFofaHistory(id){
+  try{
+    await api("reopen_fofa_evaluation",{avaliacao_id:id});
+    showReportArea("fofa");
+    await loadFofa({background:false});
+    toast("Avaliação FOFA reaberta para edição.");
+  }catch(e){toast(e.message||"Não foi possível editar a avaliação FOFA.")}
+}
+function printStandaloneContent(title,md){
+  const w=window.open("","_blank","noopener,noreferrer");
+  if(!w)return toast("O navegador bloqueou a janela de impressão.");
+  w.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${esc(title)}</title><style>@page{size:A4;margin:18mm}body{font-family:Arial,sans-serif;color:#102333;line-height:1.55}h1{font-size:22px}h2{font-size:17px;margin-top:24px;border-bottom:1px solid #d8e2e7;padding-bottom:5px}footer{position:fixed;bottom:0;font-size:9px;color:#667b86}</style></head><body><div>${markdownToHtml(md)}</div><footer>Prioridades Estratégicas | DSA · ${new Date().toLocaleDateString("pt-BR")}</footer></body></html>`);
+  w.document.close();w.focus();setTimeout(()=>w.print(),250);
 }
 
 async function loadReports(options={}){loadFofaHistory({background:true}).catch(()=>{});const cached=cacheGet("reports");if(cached){state.reports=cached.reports||[];state.difficulties=cached.difficulties||[];renderReports()}if(!options.background&&!cached)moduleBusy("reportsView",true,"Atualizando relatórios...");try{const data=await once(cacheKey("reports"),async()=>{const [r,d]=await Promise.all([api("list_reports",currentRequest()),api("list_difficulties",{})]);return{reports:r.data||[],difficulties:d.data||[]}});state.reports=data.reports;state.difficulties=data.difficulties;cacheSet("reports",data);renderReports();return data}catch(e){if(!cached)throw e;return cached}finally{moduleBusy("reportsView",false)}}
+
+function standardizedReportTitle(r){
+  const church=r?.igreja||selectedChurch()?.igreja||"Igreja";
+  return `Relatório Estratégico — ${church} — ${formatDateBR(r?.data_inicio)} a ${formatDateBR(r?.data_fim)}`;
+}
 function renderReports(){
   $("reportDifficultyChecks").innerHTML=(state.difficulties||[]).map(d=>`<label class="check-v101"><input type="checkbox" value="${d.dificuldade_id}"><span>${esc(d.descricao||d.dificuldade||"")}</span></label>`).join("");
-  $("reportHistoryList").innerHTML=(state.reports||[]).map(r=>`<article class="report-history-item-v111"><strong>${esc(r.titulo||"Relatório")} — ${esc(r.igreja||"")}</strong><span>${formatDateBR(r.data_inicio)} a ${formatDateBR(r.data_fim)} · ${formatDateTimeBR(r.gerado_em)}</span><div class="report-history-actions-v111"><button data-report-open="${r.relatorio_id}">Visualizar</button><button data-report-pdf="${r.relatorio_id}">PDF</button><button data-report-wa="${r.relatorio_id}">WhatsApp</button><button data-report-edit="${r.relatorio_id}">Editar</button></div></article>`).join("")||'<div class="empty-v111">Nenhum relatório gerado.</div>';
-  qsa("[data-report-open]").forEach(b=>b.onclick=()=>openReport(b.dataset.reportOpen));qsa("[data-report-pdf]").forEach(b=>b.onclick=()=>printReportById(b.dataset.reportPdf));qsa("[data-report-wa]").forEach(b=>b.onclick=()=>shareReport(b.dataset.reportWa));qsa("[data-report-edit]").forEach(b=>b.onclick=()=>editReport(b.dataset.reportEdit));
-  // O botão permanece clicável. A validação de igreja ocorre no clique,
-  // evitando que um estado antigo do filtro deixe o botão permanentemente inativo.
+  $("reportHistoryList").innerHTML=(state.reports||[]).map(r=>`<article class="report-history-item-v111"><strong>${esc(standardizedReportTitle(r))}</strong><span>${formatDateTimeBR(r.gerado_em)}</span><div class="report-history-actions-v111"><button data-report-open="${r.relatorio_id}">Visualizar</button><button data-report-pdf="${r.relatorio_id}">PDF</button><button data-report-wa="${r.relatorio_id}">WhatsApp</button><button data-report-edit="${r.relatorio_id}">Editar</button><button class="danger-action-soft-v221" data-report-delete="${r.relatorio_id}">Excluir</button></div></article>`).join("")||'<div class="empty-v111">Nenhum relatório gerado.</div>';
+  qsa("[data-report-open]").forEach(b=>b.onclick=()=>openReport(b.dataset.reportOpen));
+  qsa("[data-report-pdf]").forEach(b=>b.onclick=()=>printReportById(b.dataset.reportPdf));
+  qsa("[data-report-wa]").forEach(b=>b.onclick=()=>shareReport(b.dataset.reportWa));
+  qsa("[data-report-edit]").forEach(b=>b.onclick=()=>editReport(b.dataset.reportEdit));
+  qsa("[data-report-delete]").forEach(b=>b.onclick=()=>deleteReport(b.dataset.reportDelete));
   $("aiReportButton").disabled=false;
 }
+
+async function deleteReport(id){
+  const r=state.reports.find(x=>x.relatorio_id===id);
+  if(!r)return;
+  const senha=prompt(`Excluir este relatório?\n\n${standardizedReportTitle(r)}\n\nDigite sua senha para confirmar:`);
+  if(senha===null)return;
+  if(!senha)return toast("Digite sua senha para confirmar a exclusão.");
+  try{
+    await api("delete_report",{relatorio_id:id,senha},{noRetry:true});
+    cacheInvalidate("reports");
+    await loadReports({background:true});
+    toast("Relatório excluído ✔️");
+  }catch(e){toast(e.message||"Não foi possível excluir o relatório.")}
+}
+
 function markdownToHtml(md){let t=esc(md||"");t=t.replace(/^### (.*)$/gm,"<h3>$1</h3>").replace(/^## (.*)$/gm,"<h2>$1</h2>").replace(/^# (.*)$/gm,"<h1>$1</h1>").replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>").replace(/\n/g,"<br>");return t}
-function openReport(id){const r=state.reports.find(x=>x.relatorio_id===id);if(!r)return;state.currentReport=r;state.currentAiReport=r.conteudo_completo||"";$("aiReportTitle").textContent=r.titulo||"Relatório Completo";$("aiReportContext").textContent=`${r.igreja} · ${formatDateBR(r.data_inicio)} a ${formatDateBR(r.data_fim)}`;$("aiReportContent").innerHTML=markdownToHtml(state.currentAiReport);$("aiReportModal").classList.add("open")}
+function openReport(id){const r=state.reports.find(x=>x.relatorio_id===id);if(!r)return;state.currentReport=r;state.currentAiReport=r.conteudo_completo||"";$("aiReportTitle").textContent=standardizedReportTitle(r);$("aiReportContext").textContent=`${r.igreja} · ${formatDateBR(r.data_inicio)} a ${formatDateBR(r.data_fim)}`;$("aiReportContent").innerHTML=markdownToHtml(state.currentAiReport);$("aiReportModal").classList.add("open")}
 function editReport(id){const r=state.reports.find(x=>x.relatorio_id===id);if(!r)return;state.editingReportId=id;$("editingReportId").value=id;$("editingReportText").value=r.conteudo_completo||"";$("reportEditModal").classList.add("open")}
 async function saveEditedReport(){
   const r=state.reports.find(x=>x.relatorio_id===state.editingReportId);if(!r)return;loading(true,"Salvando relatório...");
@@ -1365,7 +1459,7 @@ async function saveUser(){
     const file=$("userPhotoInput").files[0];
     if(file){const dataUrl=await fileBase64(file);await api("upload_user_photo_admin",{usuario_id:id,nome_arquivo:file.name,mime_type:file.type,arquivo_base64:dataUrl.split(",")[1]},{noRetry:true})}
     cacheInvalidate("developer");await loadDeveloper({background:true});
-    btn.textContent="Salvo ✔️";toast("Usuário salvo e sincronizado com a Planilha-Mestre.");setSyncState("Conectado","ok");
+    btn.textContent="Salvo ✔️";if(btnBottom)btnBottom.textContent="Salvo ✔️";toast("Usuário salvo e sincronizado com a Planilha-Mestre.");setSyncState("Conectado","ok");
     setTimeout(()=>{closeModalById("userModal");btn.textContent="Salvar usuário";btn.disabled=false},700);
   }catch(e){btn.textContent="Salvar usuário";btn.disabled=false;toast(e.message||"Não foi possível salvar o usuário.");setSyncState("Erro de sincronização","error")}
 }
@@ -1375,13 +1469,11 @@ async function toggleUser(id){if(!await reauth())return;const u=state.users.find
 function toggleSidebar(){document.body.classList.toggle("sidebar-collapsed");localStorage.setItem("sidebarCollapsed",document.body.classList.contains("sidebar-collapsed")?"1":"0")}
 async function presentation(){try{if(!document.fullscreenElement)await document.documentElement.requestFullscreen();else await document.exitFullscreen()}catch(e){toast("Não foi possível alternar o modo apresentação.")}}
 let deferredPrompt=null;
-function setupPWA(){window.addEventListener("beforeinstallprompt",e=>{e.preventDefault();deferredPrompt=e});$("installButton").onclick=async()=>{if(deferredPrompt){deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null}else $("installHelpModal").classList.add("open")};if("serviceWorker"in navigator)navigator.serviceWorker.register("./service-worker.js",{scope:"./"}).catch(console.warn)}
-
-async function hardRefresh(){const btn=$("refreshButton");btn.disabled=true;setSyncState("Atualizando dados","sync");try{cacheInvalidate();["bootstrap","dashboard","priorities","planner","timeline","reports","requirements","myChurch","developer"].forEach(n=>localStorage.removeItem(`prioridades_cache_${n}`));const r=await api("bootstrap",periodPayload());state.user=r.user||state.user;state.modules=r.modules||state.modules;state.scope=r.scope||state.scope;state.dashboard=r.dashboard||null;cacheSet("bootstrap",r,"global");localCacheWrite("bootstrap",r);setupTerritory();if(r.dashboard){cacheSet("dashboard",r.dashboard);state.context={...state.context,...r.dashboard.context};renderDashboard(r.dashboard);renderContext()}const active=document.querySelector(".view.active")?.id;if(active==="prioritiesView")await loadPriorities({background:true});else if(active==="plannerView")await loadPlanner({background:true});else if(active==="timelineView")await loadTimeline({background:true});else if(active==="reportsView")await loadReports({background:true});else if(active==="requirementsView")await loadRequirements({background:true});else if(active==="myChurchView")await loadMyChurch({background:true});else if(active==="adminView")await loadDeveloper({background:true});prefetchCoreModules();toast("Dados atualizados.");setSyncState("Conectado","ok")}catch(e){setSyncState("Erro de sincronização","error");toast(e.message)}finally{btn.disabled=false}}
-function closeModalById(id){
-  const modal=$(id);if(!modal)return;
-  modal.classList.remove("open");
-  if(id==="userModal")document.body.classList.remove("modal-open-v118");
+function setupPWA(){
+  window.addEventListener("beforeinstallprompt",e=>{e.preventDefault();deferredPrompt=e});
+  const install=$("installButton");
+  if(install)install.onclick=async()=>{if(deferredPrompt){deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null}else $("installHelpModal")?.classList.add("open")};
+  if("serviceWorker"in navigator)navigator.serviceWorker.register("./service-worker.js",{scope:"./"}).catch(console.warn)
 }
 function bindReportAIDelegation(){
   document.addEventListener("click",e=>{
@@ -1421,7 +1513,7 @@ function bind(){
   $("criteriaStatusFilter").onchange=renderPriorities;["goalInputV51","reachedInputV51"].forEach(id=>$(id).oninput=updateLive);$("saveCriterionV51").onclick=saveCriterion;
   $("newTaskButton").onclick=()=>openTaskModal();$("saveTask").onclick=saveTask;$("deleteTask").onclick=deleteTask;
   $("newRequirementButton").onclick=()=>openRequirement();$("saveRequirementButton").onclick=saveRequirement;$("requirementSearch").oninput=renderRequirements;$("saveGoalButton").onclick=saveGoal;$("resetGoalButton").onclick=resetGoal;
-  $("saveChurchProfileButton").onclick=saveMyChurch;
+  $("saveChurchProfileButton").onclick=saveMyChurch;$("saveChurchProfileButtonBottom").onclick=saveMyChurch;
   $("printAiReportButton").onclick=()=>printReportObject(state.currentReport||state.reports[0]);$("shareAiReportButton").onclick=()=>openWhatsAppApp(state.currentReport?.resumo_whatsapp||state.currentAiReport);$("whatsappButton").onclick=whatsappSummary;$("excelButton").onclick=exportCSV;$("pdfButton").onclick=()=>printReportObject(state.currentReport||state.reports[0]);$("emailButton").onclick=()=>toast("Envio por e-mail será conectado em atualização posterior.");$("saveEditedReportButton").onclick=saveEditedReport;
   qsa("[data-report-area]").forEach(b=>b.onclick=()=>showReportArea(b.dataset.reportArea));
   qsa("[data-fofa-axis]").forEach(b=>b.onclick=()=>{state.fofaAxis=b.dataset.fofaAxis;renderFofa()});
@@ -1430,7 +1522,7 @@ function bind(){
   $("concludeFofaButton").onclick=concludeFofa;
   $("saveUserButton").onclick=saveUser;$("userSearch").oninput=renderUsers;$("rankingLevel").onchange=()=>{cacheInvalidate("dashboard");loadDashboard({background:true}).catch(e=>toast(e.message));};$("rankingLimitV20").onchange=()=>{if(state.dashboard)renderDashboard(state.dashboard);};bindAdminDelegation();bindReportAIDelegation();
   
-  $("closeInstallHelpButton").onclick=()=>$("installHelpModal").classList.remove("open");
+  if($("closeInstallHelpButton"))$("closeInstallHelpButton").onclick=()=>$("installHelpModal").classList.remove("open");
 }
 async function init(){
   setupPeriod();
