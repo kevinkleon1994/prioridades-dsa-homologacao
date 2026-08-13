@@ -19,6 +19,273 @@ let state={
   currentPriority:"Identidade",selectedRequirementId:"",currentAiReport:"",currentReport:null,editingReportId:""
 };
 
+
+/* =========================================================
+   v2.2.3 — SALVAMENTO ASSÍNCRONO ESTÁVEL
+   - rascunho por requisito / item FOFA
+   - salvamento em segundo plano
+   - resposta anterior nunca redesenha/apaga o formulário atual
+   ========================================================= */
+
+const criterionDrafts=new Map();
+const criterionSaveTimers=new Map();
+const criterionPendingSaves=new Map();
+const criterionSaveStatus=new Map();
+
+const fofaDrafts=new Map();
+const fofaSaveTimers=new Map();
+const fofaPendingSaves=new Map();
+const fofaSaveStatus=new Map();
+
+function sessionMapRead(name){
+  try{
+    const raw=sessionStorage.getItem(name);
+    const obj=raw?JSON.parse(raw):{};
+    return obj&&typeof obj==="object"?obj:{};
+  }catch(_e){return {}}
+}
+function sessionMapWrite(name,map){
+  try{
+    const obj={};
+    map.forEach((v,k)=>obj[k]=v);
+    sessionStorage.setItem(name,JSON.stringify(obj));
+  }catch(_e){}
+}
+function hydrateDraftMaps(){
+  Object.entries(sessionMapRead("prioridades_criterion_drafts")).forEach(([k,v])=>criterionDrafts.set(k,v));
+  Object.entries(sessionMapRead("prioridades_fofa_drafts")).forEach(([k,v])=>fofaDrafts.set(k,v));
+}
+hydrateDraftMaps();
+
+function criterionDraftKey(reqId=state.selectedRequirementId){
+  const year=String(state.context?.data_inicio||$("yearSingle")?.value||"").slice(0,4);
+  return [selectedChurchId()||"",reqId||"",year||""].join("|");
+}
+function fofaDraftKey(itemId){
+  return [state.fofaCurrent?.evaluation?.avaliacao_id||"",itemId||""].join("|");
+}
+function criterionFieldValues(){
+  return {
+    alcancado:$("reachedInputV51")?.value||"",
+    plano_acao:$("actionPlanV51")?.value||"",
+    responsavel:$("responsibleInputV51")?.value||"",
+    data_inicial:$("dateInputV51")?.value||"",
+    data_final:$("dateEndInputV222")?.value||"",
+    voto:$("voteInputV51")?.value||"",
+    material:$("materialInputV51")?.value||""
+  };
+}
+function writeCriterionDraft(){
+  if(!state.selectedRequirementId||!selectedChurchId())return null;
+  const key=criterionDraftKey();
+  const previous=criterionDrafts.get(key)||{};
+  const draft={
+    key,
+    requisito_id:state.selectedRequirementId,
+    igreja_id:selectedChurchId(),
+    revision:Number(previous.revision||0)+1,
+    updatedAt:Date.now(),
+    values:criterionFieldValues()
+  };
+  criterionDrafts.set(key,draft);
+  criterionSaveStatus.set(key,"dirty");
+  sessionMapWrite("prioridades_criterion_drafts",criterionDrafts);
+  return draft;
+}
+function criterionDraftFor(reqId){
+  return criterionDrafts.get(criterionDraftKey(reqId))||null;
+}
+function clearCriterionDraftIfRevision(key,revision){
+  const current=criterionDrafts.get(key);
+  if(current&&Number(current.revision||0)===Number(revision||0)){
+    criterionDrafts.delete(key);
+    sessionMapWrite("prioridades_criterion_drafts",criterionDrafts);
+  }
+}
+function scheduleCriterionAutosave(){
+  const draft=writeCriterionDraft();
+  if(!draft)return;
+  const old=criterionSaveTimers.get(draft.key);
+  if(old)clearTimeout(old);
+  criterionSaveTimers.set(draft.key,setTimeout(()=>{
+    criterionSaveTimers.delete(draft.key);
+    saveCriterionDraftByKey(draft.key,{silent:true,reason:"autosave"}).catch(()=>{});
+  },1100));
+}
+function criterionButtonState(){
+  const btn=$("saveCriterionV51");
+  if(!btn||!state.selectedRequirementId)return;
+  const key=criterionDraftKey();
+  const status=criterionSaveStatus.get(key)||"idle";
+  if(status==="saving"){btn.textContent="Salvando...";btn.disabled=true}
+  else if(status==="saved"){btn.textContent="✓ Salvo";btn.disabled=false}
+  else{btn.textContent="Salvar";btn.disabled=false}
+}
+function patchLocalResult(payload,resultId=""){
+  const targetYear=String(payload.data_realizacao||"").slice(0,4);
+  const idx=state.results.findIndex(x=>
+    String(x.igreja_id)===String(payload.igreja_id)&&
+    String(x.requisito_id)===String(payload.requisito_id)&&
+    String(x.data_realizacao||"").slice(0,4)===targetYear
+  );
+  const patch={
+    ...payload,
+    atualizado_em:new Date().toISOString()
+  };
+  if(idx>=0)state.results[idx]={...state.results[idx],...patch,resultado_id:resultId||state.results[idx].resultado_id};
+  else state.results.push({resultado_id:resultId||("LOCAL-"+Date.now()),...patch});
+}
+async function syncPrioritiesDerivedBackground(){
+  try{
+    const [rq,rs]=await Promise.all([
+      api("list_requirements",currentRequest()),
+      api("list_results",currentRequest())
+    ]);
+    state.requirements=rq.data||state.requirements;
+    state.results=rs.data||state.results;
+    cacheSet("priorities",{requirements:state.requirements,results:state.results});
+    if(!document.querySelector("#prioritiesView.active")){
+      // Não redesenha o formulário enquanto o usuário edita Prioridades.
+    }
+  }catch(e){console.warn("Sincronização silenciosa de prioridades:",e)}
+  try{
+    const d=await api("dashboard",currentRequest());
+    cacheSet("dashboard",d);
+    localCacheWrite("dashboard",d);
+    if(document.querySelector("#dashboardView.active")){
+      state.dashboard=d;
+      state.context={...state.context,...d.context};
+      renderDashboard(d);renderContext();
+    }
+  }catch(e){console.warn("Sincronização silenciosa do Dashboard:",e)}
+}
+function fofaCaptureCard(itemId){
+  const card=document.querySelector(`[data-fofa-item="${CSS.escape(itemId)}"]`);
+  if(!card)return null;
+  const val=name=>card.querySelector(`[data-fofa-field="${name}"]`)?.value||"";
+  const key=fofaDraftKey(itemId);
+  const previous=fofaDrafts.get(key)||{};
+  const draft={
+    key,itemId,
+    revision:Number(previous.revision||0)+1,
+    updatedAt:Date.now(),
+    values:{
+      nota:val("nota"),evidencia:val("evidencia"),
+      impacto:val("impacto"),urgencia:val("urgencia"),
+      governabilidade:val("governabilidade"),alinhamento:val("alinhamento")
+    }
+  };
+  fofaDrafts.set(key,draft);
+  fofaSaveStatus.set(key,"dirty");
+  sessionMapWrite("prioridades_fofa_drafts",fofaDrafts);
+  return draft;
+}
+function fofaDraftFor(itemId){return fofaDrafts.get(fofaDraftKey(itemId))||null}
+function scheduleFofaAutosave(itemId){
+  const draft=fofaCaptureCard(itemId);if(!draft)return;
+  const old=fofaSaveTimers.get(draft.key);if(old)clearTimeout(old);
+  fofaSaveTimers.set(draft.key,setTimeout(()=>{
+    fofaSaveTimers.delete(draft.key);
+    saveFofaItem(itemId,{silent:true,reason:"autosave"}).catch(()=>{});
+  },1200));
+}
+function clearFofaDraftIfRevision(key,revision){
+  const current=fofaDrafts.get(key);
+  if(current&&Number(current.revision||0)===Number(revision||0)){
+    fofaDrafts.delete(key);
+    sessionMapWrite("prioridades_fofa_drafts",fofaDrafts);
+  }
+}
+function updateFofaButtonState(itemId){
+  const card=document.querySelector(`[data-fofa-item="${CSS.escape(itemId)}"]`);
+  const btn=card?.querySelector("[data-save-fofa]");
+  if(!btn)return;
+  const status=fofaSaveStatus.get(fofaDraftKey(itemId))||"idle";
+  btn.disabled=status==="saving";
+  btn.textContent=status==="saving"?"Salvando...":status==="saved"?"✓ Salvo":"Salvar";
+}
+function patchLocalFofaResponse(itemId,payload,response={}){
+  if(!state.fofaCurrent)return;
+  const list=state.fofaCurrent.responses||(state.fofaCurrent.responses=[]);
+  const idx=list.findIndex(x=>String(x.fofa_item_id||"")===String(itemId));
+  const item=(state.fofaItems||[]).find(x=>String(x.fofa_item_id||"")===String(itemId))||{};
+  const patch={
+    ...(idx>=0?list[idx]:{}),
+    ...payload,
+    ...response,
+    fofa_item_id:itemId,
+    eixo:item.eixo||response.eixo||"",
+    tipo_fofa:item.tipo_fofa||response.tipo_fofa||"",
+    fator:item.fator||response.fator||""
+  };
+  if(idx>=0)list[idx]=patch;else list.push(patch);
+}
+async function refreshFofaMetadataBackground(){
+  const id=state.fofaCurrent?.evaluation?.avaliacao_id;
+  if(!id)return;
+  try{
+    const r=await api("get_fofa_evaluation",{avaliacao_id:id});
+    const detail=r.data||r;
+    if(detail?.evaluation){
+      state.fofaCurrent={
+        ...state.fofaCurrent,
+        ...detail,
+        responses:detail.responses||state.fofaCurrent.responses||[]
+      };
+      state.fofaCompletion=detail.completion||state.fofaCompletion;
+      // Deliberadamente sem renderFofa(): não pode apagar campos em edição.
+    }
+  }catch(e){console.warn("Atualização silenciosa FOFA:",e)}
+}
+async function flushFofaDrafts(){
+  [...fofaSaveTimers.values()].forEach(clearTimeout);
+  fofaSaveTimers.clear();
+  const keys=[...fofaDrafts.keys()];
+  for(const key of keys){
+    const draft=fofaDrafts.get(key);
+    if(draft?.itemId)await saveFofaItem(draft.itemId,{silent:true,reason:"flush"});
+  }
+  await Promise.allSettled([...fofaPendingSaves.values()]);
+}
+function setAiPriorityProgress(step,title,text){
+  qsa("#aiReportLoading [data-ai-step]").forEach(el=>{
+    const n=Number(el.dataset.aiStep||0);
+    el.classList.toggle("done",n<step);
+    el.classList.toggle("active",n===step);
+    el.classList.toggle("pending",n>step);
+  });
+  if($("aiProgressTitleV223"))$("aiProgressTitleV223").textContent=title||"";
+  if($("aiProgressTextV223"))$("aiProgressTextV223").textContent=text||"";
+}
+function finishAiPriorityProgress(){
+  qsa("#aiReportLoading [data-ai-step]").forEach(el=>{
+    el.classList.add("done");el.classList.remove("active","pending");
+  });
+}
+async function refreshCurrentModule(){
+  const active=document.querySelector(".view.active")?.id?.replace(/View$/,"")||"dashboard";
+  const btn=$("moduleRefreshButton");
+  if(btn){btn.disabled=true;btn.classList.add("spinning-v223")}
+  setSyncState("Atualizando","sync");
+  try{
+    if(active==="dashboard")await loadDashboard({background:true});
+    else if(active==="priorities")await loadPriorities({background:true});
+    else if(active==="planner")await loadPlanner({background:true});
+    else if(active==="timeline")await loadTimeline({background:true});
+    else if(active==="reports")await loadReports({background:true});
+    else if(active==="requirements")await loadRequirements({background:true});
+    else if(active==="myChurch")await loadMyChurch({background:true});
+    else if(active==="admin")await loadDeveloper({background:true});
+    setSyncState("Conectado","ok");
+  }catch(e){
+    setSyncState("Erro de sincronização","error");
+    toast(e.message||"Não foi possível atualizar o módulo.");
+  }finally{
+    if(btn){btn.disabled=false;btn.classList.remove("spinning-v223")}
+  }
+}
+
+
 const PERF={ttl:{bootstrap:300000,dashboard:60000,priorities:300000,planner:45000,timeline:45000,reports:60000,requirements:300000,myChurch:120000,developer:120000},memory:new Map(),inflight:new Map()};
 function cacheContextKey(){return JSON.stringify(currentRequest())}
 function cacheKey(name,extra=""){return `${name}|${extra||cacheContextKey()}`}
@@ -654,7 +921,13 @@ function renderDashboard(d){
 }
 
 
-async function showView(name,options={}){qsa(".view").forEach(v=>v.classList.remove("active"));$(name+"View")?.classList.add("active");if(name==="priorities")renderPriorityShell(state.currentPriority||"Identidade");qsa(".nav-button[data-view]").forEach(b=>b.classList.toggle("active",b.dataset.view===name));$("viewTitle").textContent=VIEW_TITLES[name]||name;$("sidebar").classList.remove("open");uiStateWrite();try{if(name==="priorities")await loadPriorities({background:false});else if(name==="planner")await loadPlanner({background:false});else if(name==="timeline")await loadTimeline({background:false});else if(name==="reports")await loadReports({background:false});else if(name==="requirements")await loadRequirements({background:false});else if(name==="myChurch")await loadMyChurch({background:false});else if(name==="admin")await loadDeveloper({background:false})}catch(e){toast(e.message)}}
+async function showView(name,options={}){
+  const currentView=document.querySelector(".view.active")?.id?.replace(/View$/,"");
+  if(currentView==="priorities"&&name!=="priorities"&&state.selectedRequirementId){
+    const key=criterionDraftKey(state.selectedRequirementId);
+    if(criterionDrafts.has(key))saveCriterionDraftByKey(key,{silent:true,reason:"navigation"}).catch(()=>{});
+  }
+  qsa(".view").forEach(v=>v.classList.remove("active"));$(name+"View")?.classList.add("active");if(name==="priorities")renderPriorityShell(state.currentPriority||"Identidade");qsa(".nav-button[data-view]").forEach(b=>b.classList.toggle("active",b.dataset.view===name));$("viewTitle").textContent=VIEW_TITLES[name]||name;$("sidebar").classList.remove("open");uiStateWrite();try{if(name==="priorities")await loadPriorities({background:false});else if(name==="planner")await loadPlanner({background:false});else if(name==="timeline")await loadTimeline({background:false});else if(name==="reports")await loadReports({background:false});else if(name==="requirements")await loadRequirements({background:false});else if(name==="myChurch")await loadMyChurch({background:false});else if(name==="admin")await loadDeveloper({background:false})}catch(e){toast(e.message)}}
 function openPriority(area){
   state.currentPriority=area||"Identidade";
   state.selectedRequirementId="";
@@ -707,21 +980,16 @@ function resultRecencyClient_(x){
 }
 function latestResultFor(reqId){
   const churchId=selectedChurchId();
-  // Correção: precisa respeitar o mesmo ano usado por effectiveGoal().
-  // Sem esse filtro, quando existe mais de um registro (um por ano)
-  // para o mesmo critério/igreja, esta função podia pegar o registro
-  // do ano ERRADO (o editado por último), enquanto a meta usada no
-  // cálculo era a do ano selecionado — gerando percentuais que não
-  // batem com o valor realmente salvo (ex.: 9/90% no detalhamento
-  // contra 100% no card da lista).
-  const year=Number(String(state.context.data_inicio||$("yearSingle").value).slice(0,4));
   return (state.results||[])
-    .filter(x=>String(x.requisito_id||"")===String(reqId||"")
-      &&(!churchId||String(x.igreja_id||"")===String(churchId))
-      &&(!year||Number(String(x.data_realizacao||"").slice(0,4))===year))
+    .filter(x=>String(x.requisito_id||"")===String(reqId||"")&&(!churchId||String(x.igreja_id||"")===String(churchId)))
     .sort((a,b)=>resultRecencyClient_(b)-resultRecencyClient_(a))[0]||null;
 }
-function reachedFor(reqId){return num(latestResultFor(reqId)?.alcancado||0)}
+function reachedFor(reqId){
+  const raw=Math.max(0,num(latestResultFor(reqId)?.alcancado||0));
+  const req=state.requirements.find(x=>String(x.requisito_id||"")===String(reqId||""));
+  const goal=req?effectiveGoal(req):0;
+  return goal>=0?Math.min(raw,goal):raw;
+}
 function renderPriorities(){
   document.documentElement.style.setProperty("--current",AREAS[state.currentPriority]);
   const desc={"Identidade":"Fortalecer a identidade profética da Igreja, as crenças fundamentais e o estilo de vida adventista.","Liderança":"Formar e desenvolver líderes, fortalecendo competências espirituais, administrativas e pastorais.","Novas Gerações":"Integrar crianças, adolescentes e jovens à comunhão, fidelidade, liderança e missão.","Discipulado":"Desenvolver comunhão, relacionamento, missão e multiplicação por meio de uma jornada contínua de discipulado."};
@@ -733,17 +1001,58 @@ function renderPriorities(){
   const status=$("criteriaStatusFilter").value;
   const visible=rows.filter(r=>{const p=pct(reachedFor(r.requisito_id),effectiveGoal(r));const s=p>=100?"Concluído":p>=60?"Em andamento":"Atenção";return status==="Todos"||s===status});
   $("criteriaListV51").innerHTML=visible.map((r,i)=>{const p=pct(reachedFor(r.requisito_id),effectiveGoal(r));const s=p>=100?"Concluído":p>=60?"Em andamento":"Atenção";return`<button class="criterion-v51 ${state.selectedRequirementId===r.requisito_id?"active":""}" data-id="${r.requisito_id}"><b>${String(i+1).padStart(2,"0")}</b><span><strong>${esc(r.titulo)}</strong><small>${s}</small></span><em>${Math.round(p)}%</em></button>`}).join("");
-  qsa(".criterion-v51").forEach(b=>b.onclick=()=>{state.selectedRequirementId=b.dataset.id;renderCriterion()});
+  qsa(".criterion-v51").forEach(b=>b.onclick=()=>{
+    if(state.selectedRequirementId&&criterionDraftFor(state.selectedRequirementId)){
+      const oldKey=criterionDraftKey(state.selectedRequirementId);
+      saveCriterionDraftByKey(oldKey,{silent:true,reason:"switch"}).catch(()=>{});
+    }
+    state.selectedRequirementId=b.dataset.id;
+    renderCriterion();
+  });
   if(!state.selectedRequirementId&&rows[0])state.selectedRequirementId=rows[0].requisito_id;renderCriterion();
 }
 function renderCriterion(){
   const r=state.requirements.find(x=>x.requisito_id===state.selectedRequirementId);if(!r)return;
-  const goal=effectiveGoal(r),reached=reachedFor(r.requisito_id),p=pct(reached,goal),churchId=selectedChurchId(),last=latestResultFor(r.requisito_id)||{};
-  $("criterionTitleV51").textContent=r.titulo;$("criterionStatusV51").textContent=p>=100?"Concluído":p>=60?"Em andamento":"Atenção";$("criterionDescriptionV51").textContent=r.direcionamento||"—";$("criterionQuestionV51").textContent=r.pergunta||"—";
-  $("actionPlanV51").value=last.plano_acao||"";$("goalInputV51").value=goal;$("reachedInputV51").value=last.alcancado??"";$("responsibleInputV51").value=last.responsavel||"";$("dateInputV51").value=last.data_inicial||"";$("dateEndInputV222").value=last.data_final||"";$("voteInputV51").value=last.voto||"";$("materialInputV51").value=last.material||"";updateLive();
-  const disabled=!churchId;["actionPlanV51","reachedInputV51","responsibleInputV51","dateInputV51","dateEndInputV222","voteInputV51","materialInputV51","saveCriterionV51"].forEach(id=>{if($(id))$(id).disabled=disabled});$("goalInputV51").disabled=true;$("saveCriterionV51").textContent=disabled?"Selecione uma igreja para editar":"Salvar";
+  const goal=effectiveGoal(r),reached=reachedFor(r.requisito_id),p=pct(reached,goal),churchId=selectedChurchId(),server=latestResultFor(r.requisito_id)||{};
+  const draft=criterionDraftFor(r.requisito_id);
+  const last=draft?{...server,...draft.values}:server;
+
+  $("criterionTitleV51").textContent=r.titulo;
+  $("criterionStatusV51").textContent=p>=100?"Concluído":p>=60?"Em andamento":"Atenção";
+  $("criterionDescriptionV51").textContent=r.direcionamento||"—";
+  $("criterionQuestionV51").textContent=r.pergunta||"—";
+  $("actionPlanV51").value=last.plano_acao||"";
+  $("goalInputV51").value=goal;
+  $("reachedInputV51").max=String(Math.max(0,goal));
+  $("reachedInputV51").min="0";
+  $("reachedInputV51").value=Math.min(Math.max(0,num(last.alcancado??0)),Math.max(0,goal));
+  $("responsibleInputV51").value=last.responsavel||"";
+  $("dateInputV51").value=last.data_inicial||"";
+  $("dateEndInputV222").value=last.data_final||"";
+  $("voteInputV51").value=last.voto||"";
+  $("materialInputV51").value=last.material||"";
+  updateLive();
+
+  const disabled=!churchId;
+  ["actionPlanV51","reachedInputV51","responsibleInputV51","dateInputV51","dateEndInputV222","voteInputV51","materialInputV51","saveCriterionV51"]
+    .forEach(id=>{if($(id))$(id).disabled=disabled});
+  $("goalInputV51").disabled=true;
+  if(disabled)$("saveCriterionV51").textContent="Selecione uma igreja para editar";
+  else criterionButtonState();
 }
-function updateLive(){const g=num($("goalInputV51").value),r=num($("reachedInputV51").value),p=pct(r,g);$("livePercentV51").textContent=Math.round(p)+"%";$("liveProgressV51").style.width=p+"%"}
+function updateLive(){
+  const g=Math.max(0,num($("goalInputV51").value));
+  let r=Math.max(0,num($("reachedInputV51").value));
+  if(r>g){
+    r=g;
+    $("reachedInputV51").value=String(g);
+    toast("O valor alcançado foi limitado à meta do requisito.");
+  }
+  $("reachedInputV51").max=String(g);
+  const p=pct(r,g);
+  $("livePercentV51").textContent=Math.round(p)+"%";
+  $("liveProgressV51").style.width=Math.min(100,p)+"%";
+}
 function recordDateForCurrentPeriod(){
   const today=localTodayIso();
   const start=String(state.context?.data_inicio||"").slice(0,10);
@@ -752,30 +1061,95 @@ function recordDateForCurrentPeriod(){
   return end||start||today;
 }
 async function saveCriterion(){
-  const churchId=selectedChurchId();if(!churchId)return toast("Selecione uma igreja.");
-  const btn=$("saveCriterionV51");
-  const payload={igreja_id:churchId,requisito_id:state.selectedRequirementId,data_realizacao:recordDateForCurrentPeriod(),alcancado:num($("reachedInputV51").value),plano_acao:$("actionPlanV51").value,responsavel:$("responsibleInputV51").value,data_inicial:$("dateInputV51").value,data_final:$("dateEndInputV222").value,voto:$("voteInputV51").value,material:$("materialInputV51").value};
-  const previousText=btn.textContent;
-  btn.disabled=true;btn.textContent="Salvando...";setSyncState("Salvando resultado","sync");
-  // Optimistic UI: reflete o valor imediatamente sem congelar a tela.
-  const local={resultado_id:"LOCAL-"+Date.now(),...payload};
-  const targetYear=String(payload.data_realizacao||"").slice(0,4);const idx=state.results.findIndex(x=>String(x.igreja_id)===String(churchId)&&String(x.requisito_id)===String(payload.requisito_id)&&String(x.data_realizacao||"").slice(0,4)===targetYear);
-  if(idx>=0)state.results[idx]={...state.results[idx],...local,resultado_id:state.results[idx].resultado_id};else state.results.push(local);
-  renderPriorities();
-  try{
-    const r=await api("save_result",payload);
-    if(idx<0&&r.resultado_id)local.resultado_id=r.resultado_id;
-    cacheInvalidate(["priorities","dashboard"]);
-    btn.textContent="✓ Salvo";toast("Resultado salvo.");setSyncState("Conectado","ok");
-    // Revalidação sem bloquear o usuário.
-    Promise.allSettled([loadPriorities({background:true}),loadDashboard({background:true})]).catch(()=>{});
-    setTimeout(()=>{if(btn)btn.textContent="Salvar"},1200);
-  }catch(e){
-    cacheInvalidate(["priorities","dashboard"]);
-    toast(e.message||"Não foi possível salvar.");setSyncState("Erro de sincronização","error");
-    loadPriorities({background:true}).catch(()=>{});
-    btn.textContent="Tentar novamente";
-  }finally{btn.disabled=false;if(btn.textContent==="Salvando...")btn.textContent=previousText||"Salvar"}
+  const draft=writeCriterionDraft();
+  if(!draft)return toast("Selecione uma igreja.");
+  return saveCriterionDraftByKey(draft.key,{silent:false,reason:"manual"});
+}
+async function saveCriterionDraftByKey(key,options={}){
+  const draft=criterionDrafts.get(key);
+  if(!draft)return;
+
+  const existingPending=criterionPendingSaves.get(key);
+  if(existingPending){
+    // A revisão mais nova ficará agendada após a operação atual.
+    return existingPending;
+  }
+
+  const revision=Number(draft.revision||0);
+  const goalReq=state.requirements.find(x=>String(x.requisito_id)===String(draft.requisito_id));
+  const goal=goalReq?effectiveGoal(goalReq):0;
+  const reached=Math.max(0,num(draft.values.alcancado));
+
+  if(reached>goal){
+    draft.values.alcancado=String(goal);
+    criterionDrafts.set(key,draft);
+    sessionMapWrite("prioridades_criterion_drafts",criterionDrafts);
+    if(state.selectedRequirementId===draft.requisito_id){
+      $("reachedInputV51").value=String(goal);updateLive();
+    }
+    if(!options.silent)toast(`O valor alcançado não pode ser maior que a meta (${fmt(goal)}).`);
+    return;
+  }
+
+  const payload={
+    igreja_id:draft.igreja_id,
+    requisito_id:draft.requisito_id,
+    data_realizacao:recordDateForCurrentPeriod(),
+    alcancado:reached,
+    plano_acao:draft.values.plano_acao||"",
+    responsavel:draft.values.responsavel||"",
+    data_inicial:draft.values.data_inicial||"",
+    data_final:draft.values.data_final||"",
+    voto:draft.values.voto||"",
+    material:draft.values.material||""
+  };
+
+  criterionSaveStatus.set(key,"saving");
+  if(criterionDraftKey()===key)criterionButtonState();
+
+  // Atualização otimista apenas no estado em memória; não redesenha o formulário.
+  patchLocalResult(payload);
+
+  const promise=(async()=>{
+    try{
+      const r=await api("save_result",payload);
+      patchLocalResult(payload,r.resultado_id||"");
+      criterionSaveStatus.set(key,"saved");
+      clearCriterionDraftIfRevision(key,revision);
+
+      if(criterionDraftKey()===key){
+        criterionButtonState();
+        setTimeout(()=>{
+          if(criterionSaveStatus.get(key)==="saved"){
+            criterionSaveStatus.set(key,"idle");criterionButtonState();
+          }
+        },1300);
+      }
+
+      setSyncState("Conectado","ok");
+      cacheInvalidate(["priorities","dashboard"]);
+      syncPrioritiesDerivedBackground().catch(()=>{});
+
+      // Se o usuário alterou este mesmo requisito enquanto salvava, salva a nova revisão depois.
+      const newer=criterionDrafts.get(key);
+      if(newer&&Number(newer.revision||0)>revision){
+        setTimeout(()=>saveCriterionDraftByKey(key,{silent:true,reason:"revision"}).catch(()=>{}),120);
+      }
+      return r;
+    }catch(e){
+      criterionSaveStatus.set(key,"error");
+      if(criterionDraftKey()===key)criterionButtonState();
+      setSyncState("Erro de sincronização","error");
+      if(!options.silent)toast(e.message||"Não foi possível salvar.");
+      else console.warn("Autosave de requisito:",e);
+      throw e;
+    }finally{
+      criterionPendingSaves.delete(key);
+    }
+  })();
+
+  criterionPendingSaves.set(key,promise);
+  return promise;
 }
 
 async function loadPlanner(options={}){const cached=cacheGet("planner");if(cached){state.planner=cached;if(!options.prefetch)renderPlanner()}if(!options.background&&!cached)moduleBusy("plannerView",true,"Atualizando Planner...");try{const r=await once(cacheKey("planner"),()=>api("list_planner",currentRequest()));state.planner=r.data||[];cacheSet("planner",state.planner);if(!options.prefetch||document.querySelector("#plannerView.active"))renderPlanner();return state.planner}catch(e){if(!cached)throw e;return cached}finally{moduleBusy("plannerView",false)}}
@@ -1290,7 +1664,7 @@ function renderFofa(){
     return `<section class="fofa-quadrant-v21 fofa-${type.toLowerCase().replace("ç","c")}" data-fofa-type="${type}">
       <div class="fofa-quadrant-head-v21"><strong>${type.toUpperCase()}</strong><span>${type==="Força"||type==="Fraqueza"?"Ambiente interno":"Ambiente externo"}</span></div>
       ${rows.length?rows.map(item=>{
-        const r=responseMap.get(String(item.fofa_item_id))||{};
+        const server=responseMap.get(String(item.fofa_item_id))||{};const draft=fofaDraftFor(item.fofa_item_id);const r=draft?{...server,...draft.values}:server;
         return `<article class="fofa-factor-v21" data-fofa-item="${item.fofa_item_id}">
           <strong>${esc(item.fator)}</strong>
           <small>${esc(item.meta_relacionada||"")}</small>
@@ -1308,7 +1682,18 @@ function renderFofa(){
     </section>`;
   }).join("");
 
-  qsa("[data-save-fofa]").forEach(b=>b.onclick=()=>saveFofaItem(b.dataset.saveFofa));
+  qsa("[data-save-fofa]").forEach(b=>{
+    b.onclick=()=>saveFofaItem(b.dataset.saveFofa,{silent:false,reason:"manual"});
+    updateFofaButtonState(b.dataset.saveFofa);
+  });
+  qsa("[data-fofa-item]").forEach(card=>{
+    const itemId=card.dataset.fofaItem;
+    qsa("[data-fofa-field]",card).forEach(field=>{
+      const handler=()=>scheduleFofaAutosave(itemId);
+      field.addEventListener("input",handler);
+      field.addEventListener("change",handler);
+    });
+  });
 }
 
 function fofaScoreOptions(value){
@@ -1334,28 +1719,77 @@ async function confirmStartFofa(){
   await loadFofa({background:true});
 }
 
-async function saveFofaItem(itemId){
-  if(!state.fofaCurrent?.evaluation?.avaliacao_id)return toast("Inicie uma avaliação FOFA.");
-  const card=document.querySelector(`[data-fofa-item="${CSS.escape(itemId)}"]`);
-  if(!card)return;
-  const val=name=>card.querySelector(`[data-fofa-field="${name}"]`)?.value||"";
-  const btn=card.querySelector(`[data-save-fofa]`);
-  btn.disabled=true;btn.textContent="Salvando...";
-  try{
-    await api("save_fofa_response",{
-      avaliacao_id:state.fofaCurrent.evaluation.avaliacao_id,
-      fofa_item_id:itemId,
-      nota:val("nota"),evidencia:val("evidencia"),
-      impacto:val("impacto"),urgencia:val("urgencia"),
-      governabilidade:val("governabilidade"),alinhamento:val("alinhamento")
-    });
-    await loadFofa({background:true});
-    toast("Item FOFA salvo ✔️");
-  }finally{btn.disabled=false}
+async function saveFofaItem(itemId,options={}){
+  if(!state.fofaCurrent?.evaluation?.avaliacao_id){
+    if(!options.silent)toast("Inicie uma avaliação FOFA.");
+    return;
+  }
+
+  let draft=fofaDraftFor(itemId);
+  if(!draft)draft=fofaCaptureCard(itemId);
+  if(!draft)return;
+
+  const key=draft.key;
+  const existingPending=fofaPendingSaves.get(key);
+  if(existingPending)return existingPending;
+
+  const revision=Number(draft.revision||0);
+  const payload={
+    avaliacao_id:state.fofaCurrent.evaluation.avaliacao_id,
+    fofa_item_id:itemId,
+    nota:draft.values.nota||"",
+    evidencia:draft.values.evidencia||"",
+    impacto:draft.values.impacto||"",
+    urgencia:draft.values.urgencia||"",
+    governabilidade:draft.values.governabilidade||"",
+    alinhamento:draft.values.alinhamento||""
+  };
+
+  fofaSaveStatus.set(key,"saving");
+  updateFofaButtonState(itemId);
+
+  const promise=(async()=>{
+    try{
+      const r=await api("save_fofa_response",payload);
+      patchLocalFofaResponse(itemId,payload,r||{});
+      fofaSaveStatus.set(key,"saved");
+      clearFofaDraftIfRevision(key,revision);
+      updateFofaButtonState(itemId);
+
+      setTimeout(()=>{
+        if(fofaSaveStatus.get(key)==="saved"){
+          fofaSaveStatus.set(key,"idle");
+          updateFofaButtonState(itemId);
+        }
+      },1300);
+
+      // Não chama loadFofa/renderFofa aqui. O próximo item em edição permanece intacto.
+      refreshFofaMetadataBackground().catch(()=>{});
+
+      const newer=fofaDrafts.get(key);
+      if(newer&&Number(newer.revision||0)>revision){
+        setTimeout(()=>saveFofaItem(itemId,{silent:true,reason:"revision"}).catch(()=>{}),120);
+      }
+      return r;
+    }catch(e){
+      fofaSaveStatus.set(key,"error");
+      updateFofaButtonState(itemId);
+      if(!options.silent)toast(e.message||"Não foi possível salvar o item FOFA.");
+      else console.warn("Autosave FOFA:",e);
+      throw e;
+    }finally{
+      fofaPendingSaves.delete(key);
+    }
+  })();
+
+  fofaPendingSaves.set(key,promise);
+  return promise;
 }
 
 async function concludeFofa(){
   if(!state.fofaCurrent?.evaluation?.avaliacao_id)return;
+  await flushFofaDrafts();
+  await refreshFofaMetadataBackground();
   const answered=Number(state.fofaProgress?.answered||0),total=Number(state.fofaProgress?.total||state.fofaItems.length||0);
   if(!answered)return toast("Avaliação vazia. Registre respostas antes de concluir.");
   const c=state.fofaCompletion||state.fofaCurrent?.completion||{};
@@ -1527,11 +1961,7 @@ async function generateAI(){
   $("aiReportContext").textContent=
     `${church?.igreja||""} · ${formatDateBR(state.context.data_inicio)} a ${formatDateBR(state.context.data_fim)}`;
 
-  const loadingText=$("aiReportLoading")?.querySelector("span");
-  const loadingStrong=$("aiReportLoading")?.querySelector("strong");
-
-  if(loadingStrong)loadingStrong.textContent="Preparando a análise estratégica...";
-  if(loadingText)loadingText.textContent="Validando o Gemini e organizando os dados da igreja.";
+  setAiPriorityProgress(1,"Preparando a análise estratégica...","Validando o Gemini e organizando os dados da igreja.");
 
   btn.disabled=true;
   btn.textContent="✦ Gerando relatório...";
@@ -1548,21 +1978,16 @@ async function generateAI(){
       throw new Error("A chave GEMINI_API_KEY não está configurada no Apps Script.");
     }
 
-    if(loadingStrong)loadingStrong.textContent="Analisando os dados da igreja...";
-    if(loadingText)loadingText.textContent=`Gemini ${status.model||""} · aguarde alguns segundos.`;
+    setAiPriorityProgress(2,"Analisando os dados da igreja...",`Gemini ${status.model||""} · consolidando Identidade e Liderança.`);
 
     progressTimer=setInterval(()=>{
       elapsed+=10;
-      if(!loadingText)return;
-
       if(elapsed<30){
-        loadingText.textContent="Organizando indicadores, prioridades e dificuldades...";
+        setAiPriorityProgress(2,"Analisando indicadores...","Consolidando metas, resultados e dificuldades.");
       }else if(elapsed<60){
-        loadingText.textContent="Gemini está elaborando o diagnóstico estratégico...";
-      }else if(elapsed<120){
-        loadingText.textContent="Preparando recomendações e plano de ação...";
+        setAiPriorityProgress(3,"Construindo o diagnóstico...","Relacionando Novas Gerações às prioridades estratégicas.");
       }else{
-        loadingText.textContent="A análise continua em processamento. Não feche esta janela.";
+        setAiPriorityProgress(4,"Finalizando recomendações...","Consolidando Discipulado, plano de ação e síntese executiva.");
       }
     },10000);
 
@@ -1586,6 +2011,7 @@ async function generateAI(){
       throw new Error("O relatório foi concluído, mas nenhum texto foi retornado.");
     }
 
+    finishAiPriorityProgress();
     state.currentAiReport=content;
     state.currentReport={
       ...report,
@@ -1841,10 +2267,16 @@ function bind(){
 
   bindClick("sidebarLogoButton",toggleSidebar);
   bindClick("mobileMenu",()=>$("sidebar")?.classList.toggle("open"));
+  bindClick("moduleRefreshButton",refreshCurrentModule);
   bindClick("presentationButton",presentation);
 
   bindChange("criteriaStatusFilter",renderPriorities);
   ["goalInputV51","reachedInputV51"].forEach(id=>bindInput(id,updateLive));
+  ["actionPlanV51","reachedInputV51","responsibleInputV51","dateInputV51","dateEndInputV222","voteInputV51","materialInputV51"]
+    .forEach(id=>{
+      bindInput(id,()=>{if(id==="reachedInputV51")updateLive();scheduleCriterionAutosave()});
+      bindChange(id,()=>{if(id==="reachedInputV51")updateLive();scheduleCriterionAutosave()});
+    });
   bindClick("saveCriterionV51",saveCriterion);
 
   bindClick("newTaskButton",()=>openTaskModal());
@@ -1896,7 +2328,11 @@ function bind(){
     $("closeInstallHelpButton").onclick=()=>$("installHelpModal")?.classList.remove("open");
   }
 
-  window.addEventListener("beforeunload",uiStateWrite);
+  window.addEventListener("beforeunload",()=>{
+    uiStateWrite();
+    sessionMapWrite("prioridades_criterion_drafts",criterionDrafts);
+    sessionMapWrite("prioridades_fofa_drafts",fofaDrafts);
+  });
 }
 async function init(){
   setupPeriod();
