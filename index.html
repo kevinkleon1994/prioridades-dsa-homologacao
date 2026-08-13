@@ -20,7 +20,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./styles.css?v=2.2.2">
+  <link rel="stylesheet" href="./styles.css?v=2.2.3-async2">
 
 </head>
 <body>
@@ -42,7 +42,7 @@
   </div>
   <div class="login-progress-copy-v20"><strong id="loginProgressTitleV20">Validando acesso...</strong><span id="loginProgressTextV20">Conectando ao ambiente seguro.</span></div>
 </div>
-      <small>Desenvolvido por Kevin Fernandes · © 2026 · Versão 2.2.2</small>
+      <small>Desenvolvido por Kevin Fernandes · © 2026 · Versão 2.2.3</small>
       <div id="loginMessage" class="inline-message"></div>
     </div>
   </section>
@@ -83,6 +83,7 @@
         <div><p class="eyebrow" id="fieldContext">MISSÃO OESTE DO PARÁ</p><h1 id="viewTitle">Dashboard Executivo</h1></div>
         <div class="top-actions">
           <span id="syncBadge" class="sync-badge"><i></i>Sincronizando</span>
+          <button id="moduleRefreshButton" class="icon-action" title="Atualizar módulo" aria-label="Atualizar módulo">↻</button>
           <button id="presentationButton" class="icon-action" title="Modo apresentação">⛶</button>
         </div>
       </header>
@@ -326,7 +327,7 @@
         </article>
       </section>
 
-      <footer><span>Desenvolvido por Kevin Fernandes · © 2026 · Versão 2.2.2</span><span id="lastUpdate">Última atualização: —</span></footer>
+      <footer><span>Desenvolvido por Kevin Fernandes · © 2026 · Versão 2.2.3</span><span id="lastUpdate">Última atualização: —</span></footer>
     </main>
   </div>
 
@@ -416,10 +417,20 @@
           <button id="shareAiReportButton" class="secondary-button">Compartilhar</button>
         </div>
       </div>
-      <div id="aiReportLoading" class="ai-loading hidden">
-        <div class="ai-spinner"></div>
-        <strong>Analisando os dados da igreja...</strong>
-        <span>Esta etapa pode levar alguns segundos.</span>
+      <div id="aiReportLoading" class="ai-loading ai-priority-loading-v223 hidden">
+        <div class="ai-priority-progress-v223" aria-live="polite">
+          <div class="login-progress-track-v20">
+            <div class="login-progress-line-v20"></div>
+            <div class="login-step-v20" data-ai-step="1"><span class="login-shape-v20 shape-identidade-v20"></span><small>Identidade</small></div>
+            <div class="login-step-v20" data-ai-step="2"><span class="login-shape-v20 shape-lideranca-v20"></span><small>Liderança</small></div>
+            <div class="login-step-v20" data-ai-step="3"><span class="login-shape-v20 shape-geracoes-v20"></span><small>Novas Gerações</small></div>
+            <div class="login-step-v20" data-ai-step="4"><span class="login-shape-v20 shape-discipulado-v20"></span><small>Discipulado</small></div>
+          </div>
+          <div class="login-progress-copy-v20">
+            <strong id="aiProgressTitleV223">Preparando a análise estratégica...</strong>
+            <span id="aiProgressTextV223">Organizando os dados da igreja.</span>
+          </div>
+        </div>
       </div>
       <article id="aiReportContent" class="ai-report-content"></article>
       <div class="ai-disclaimer">
@@ -490,7 +501,7 @@
   <div id="toast" class="toast"></div>
 
   <script src="./config.js"></script>
-  <script src="./app.js?v=2.2.2"></script>
+  <script src="./app.js?v=2.2.3-async2"></script>
 
 
 </body>
