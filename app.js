@@ -102,25 +102,160 @@ function clearCriterionDraftIfRevision(key,revision){
     sessionMapWrite("prioridades_criterion_drafts",criterionDrafts);
   }
 }
-function scheduleCriterionAutosave(){
+function rememberCriterionDraft(){
+  // v2.2.4: preencher NÃO grava na planilha.
+  // Apenas preserva localmente o formulário até o usuário clicar em Salvar.
   const draft=writeCriterionDraft();
-  if(!draft)return;
-  const old=criterionSaveTimers.get(draft.key);
-  if(old)clearTimeout(old);
-  criterionSaveTimers.set(draft.key,setTimeout(()=>{
-    criterionSaveTimers.delete(draft.key);
-    saveCriterionDraftByKey(draft.key,{silent:true,reason:"autosave"}).catch(()=>{});
-  },1100));
+  if(draft)criterionButtonState();
+  return draft;
 }
 function criterionButtonState(){
   const btn=$("saveCriterionV51");
   if(!btn||!state.selectedRequirementId)return;
   const key=criterionDraftKey();
   const status=criterionSaveStatus.get(key)||"idle";
-  if(status==="saving"){btn.textContent="Salvando...";btn.disabled=true}
-  else if(status==="saved"){btn.textContent="✓ Salvo";btn.disabled=false}
-  else{btn.textContent="Salvar";btn.disabled=false}
+
+  btn.disabled=false;
+  if(status==="saving")btn.textContent="✓ Salvo";
+  else if(status==="verified")btn.textContent="✓ Salvo";
+  else if(status==="error")btn.textContent="⚠ Salvar novamente";
+  else btn.textContent="Salvar";
 }
+
+function updatePriorityVisualsOnly(){
+  const rows=state.requirements.filter(r=>r.prioridade===state.currentPriority);
+  const totals=rows.reduce((a,r)=>{
+    const g=effectiveGoal(r),v=reachedFor(r.requisito_id);
+    a.g+=g;a.v+=v;return a;
+  },{g:0,v:0});
+  const pp=pct(totals.v,totals.g);
+
+  if($("priorityPercentV7"))$("priorityPercentV7").textContent=Math.round(pp)+"%";
+  if($("priorityProgressV7"))$("priorityProgressV7").style.width=pp+"%";
+  if($("priorityGoalV7"))$("priorityGoalV7").textContent=fmt(totals.g);
+  if($("priorityReachedV7"))$("priorityReachedV7").textContent=fmt(totals.v);
+  if($("priorityCountV7"))$("priorityCountV7").textContent=rows.length;
+
+  const status=$("criteriaStatusFilter")?.value||"Todos";
+  const visible=rows.filter(r=>{
+    const p=pct(reachedFor(r.requisito_id),effectiveGoal(r));
+    const s=p>=100?"Concluído":p>=60?"Em andamento":"Atenção";
+    return status==="Todos"||s===status;
+  });
+
+  if($("criteriaListV51")){
+    $("criteriaListV51").innerHTML=visible.map((r,i)=>{
+      const p=pct(reachedFor(r.requisito_id),effectiveGoal(r));
+      const s=p>=100?"Concluído":p>=60?"Em andamento":"Atenção";
+      return `<button class="criterion-v51 ${state.selectedRequirementId===r.requisito_id?"active":""}" data-id="${r.requisito_id}">
+        <b>${String(i+1).padStart(2,"0")}</b>
+        <span><strong>${esc(r.titulo)}</strong><small>${s}</small></span>
+        <em>${Math.round(p)}%</em>
+      </button>`;
+    }).join("");
+
+    qsa(".criterion-v51").forEach(b=>b.onclick=()=>{
+      state.selectedRequirementId=b.dataset.id;
+      renderCriterion();
+    });
+  }
+}
+
+function comparableText_(v){return String(v??"").trim()}
+function comparableNumber_(v){return Number(v||0)}
+function resultMatchesPayload_(row,payload){
+  if(!row)return false;
+  return comparableNumber_(row.alcancado)===comparableNumber_(payload.alcancado) &&
+    comparableText_(row.plano_acao)===comparableText_(payload.plano_acao) &&
+    comparableText_(row.responsavel)===comparableText_(payload.responsavel) &&
+    comparableText_(row.data_inicial).slice(0,10)===comparableText_(payload.data_inicial).slice(0,10) &&
+    comparableText_(row.data_final).slice(0,10)===comparableText_(payload.data_final).slice(0,10) &&
+    comparableText_(row.voto)===comparableText_(payload.voto) &&
+    comparableText_(row.material)===comparableText_(payload.material);
+}
+
+async function verifyCriterionSavedInBackground(payload,key,revision){
+  try{
+    const rs=await api("list_results",currentRequest(),{noRetry:false});
+    const year=String(payload.data_realizacao||"").slice(0,4);
+    const row=(rs.data||[]).find(x=>
+      String(x.igreja_id||"")===String(payload.igreja_id||"") &&
+      String(x.requisito_id||"")===String(payload.requisito_id||"") &&
+      String(x.data_realizacao||"").slice(0,4)===year
+    );
+
+    if(!resultMatchesPayload_(row,payload)){
+      criterionSaveStatus.set(key,"error");
+      if(criterionDraftKey()===key)criterionButtonState();
+      setSyncState("Divergência de sincronização","error");
+      console.error("Validação pós-gravação divergente.",{payload,row});
+      return false;
+    }
+
+    patchLocalResult(row,row.resultado_id||"");
+    criterionSaveStatus.set(key,"verified");
+    clearCriterionDraftIfRevision(key,revision);
+    if(criterionDraftKey()===key)criterionButtonState();
+    setSyncState("Conectado","ok");
+
+    cacheSet("priorities",{requirements:state.requirements,results:state.results});
+    return true;
+  }catch(e){
+    // A gravação já pode ter ocorrido; preserva o draft para nova validação/tentativa.
+    criterionSaveStatus.set(key,"error");
+    if(criterionDraftKey()===key)criterionButtonState();
+    setSyncState("Verificação pendente","error");
+    console.warn("Não foi possível validar a gravação do requisito:",e);
+    return false;
+  }
+}
+
+function fofaPayloadMatches_(row,payload){
+  if(!row)return false;
+  return comparableNumber_(row.nota)===comparableNumber_(payload.nota) &&
+    comparableText_(row.evidencia)===comparableText_(payload.evidencia) &&
+    comparableNumber_(row.impacto)===comparableNumber_(payload.impacto) &&
+    comparableNumber_(row.urgencia)===comparableNumber_(payload.urgencia) &&
+    comparableNumber_(row.governabilidade)===comparableNumber_(payload.governabilidade) &&
+    comparableNumber_(row.alinhamento)===comparableNumber_(payload.alinhamento);
+}
+
+async function verifyFofaSavedInBackground(itemId,payload,key,revision){
+  try{
+    const r=await api("get_fofa_evaluation",{avaliacao_id:payload.avaliacao_id});
+    const detail=r.data||r;
+    const row=(detail.responses||[]).find(x=>String(x.fofa_item_id||"")===String(itemId));
+
+    if(!fofaPayloadMatches_(row,payload)){
+      fofaSaveStatus.set(key,"error");
+      updateFofaButtonState(itemId);
+      setSyncState("Divergência de sincronização","error");
+      console.error("Validação FOFA divergente.",{payload,row});
+      return false;
+    }
+
+    patchLocalFofaResponse(itemId,payload,row||{});
+    fofaSaveStatus.set(key,"verified");
+    clearFofaDraftIfRevision(key,revision);
+    updateFofaButtonState(itemId);
+
+    state.fofaCurrent={
+      ...state.fofaCurrent,
+      ...detail,
+      responses:detail.responses||state.fofaCurrent?.responses||[]
+    };
+    state.fofaCompletion=detail.completion||state.fofaCompletion;
+    setSyncState("Conectado","ok");
+    return true;
+  }catch(e){
+    fofaSaveStatus.set(key,"error");
+    updateFofaButtonState(itemId);
+    setSyncState("Verificação pendente","error");
+    console.warn("Não foi possível validar a gravação FOFA:",e);
+    return false;
+  }
+}
+
 function patchLocalResult(payload,resultId=""){
   const targetYear=String(payload.data_realizacao||"").slice(0,4);
   const idx=state.results.findIndex(x=>
@@ -181,13 +316,12 @@ function fofaCaptureCard(itemId){
   return draft;
 }
 function fofaDraftFor(itemId){return fofaDrafts.get(fofaDraftKey(itemId))||null}
-function scheduleFofaAutosave(itemId){
-  const draft=fofaCaptureCard(itemId);if(!draft)return;
-  const old=fofaSaveTimers.get(draft.key);if(old)clearTimeout(old);
-  fofaSaveTimers.set(draft.key,setTimeout(()=>{
-    fofaSaveTimers.delete(draft.key);
-    saveFofaItem(itemId,{silent:true,reason:"autosave"}).catch(()=>{});
-  },1200));
+function rememberFofaDraft(itemId){
+  // v2.2.4: edição de campos FOFA fica apenas no front/sessionStorage
+  // até o botão Salvar do próprio fator ser acionado.
+  const draft=fofaCaptureCard(itemId);
+  if(draft)updateFofaButtonState(itemId);
+  return draft;
 }
 function clearFofaDraftIfRevision(key,revision){
   const current=fofaDrafts.get(key);
@@ -201,8 +335,13 @@ function updateFofaButtonState(itemId){
   const btn=card?.querySelector("[data-save-fofa]");
   if(!btn)return;
   const status=fofaSaveStatus.get(fofaDraftKey(itemId))||"idle";
-  btn.disabled=status==="saving";
-  btn.textContent=status==="saving"?"Salvando...":status==="saved"?"✓ Salvo":"Salvar";
+
+  btn.disabled=false;
+  btn.textContent=
+    status==="saving"?"✓ Salvo":
+    status==="verified"?"✓ Salvo":
+    status==="error"?"⚠ Salvar novamente":
+    "Salvar";
 }
 function patchLocalFofaResponse(itemId,payload,response={}){
   if(!state.fofaCurrent)return;
@@ -238,13 +377,17 @@ async function refreshFofaMetadataBackground(){
   }catch(e){console.warn("Atualização silenciosa FOFA:",e)}
 }
 async function flushFofaDrafts(){
-  [...fofaSaveTimers.values()].forEach(clearTimeout);
-  fofaSaveTimers.clear();
-  const keys=[...fofaDrafts.keys()];
-  for(const key of keys){
-    const draft=fofaDrafts.get(key);
-    if(draft?.itemId)await saveFofaItem(draft.itemId,{silent:true,reason:"flush"});
+  // v2.2.4: conclusão NÃO transforma rascunhos não salvos em gravação automática.
+  const dirty=[...fofaDrafts.entries()]
+    .filter(([key])=>(fofaSaveStatus.get(key)||"dirty")==="dirty");
+
+  if(dirty.length){
+    throw new Error(
+      `Há ${dirty.length} item(ns) FOFA preenchido(s) ainda não salvo(s). `+
+      `Clique em Salvar nos respectivos itens antes de concluir a avaliação.`
+    );
   }
+
   await Promise.allSettled([...fofaPendingSaves.values()]);
 }
 function setAiPriorityProgress(step,title,text){
@@ -922,11 +1065,7 @@ function renderDashboard(d){
 
 
 async function showView(name,options={}){
-  const currentView=document.querySelector(".view.active")?.id?.replace(/View$/,"");
-  if(currentView==="priorities"&&name!=="priorities"&&state.selectedRequirementId){
-    const key=criterionDraftKey(state.selectedRequirementId);
-    if(criterionDrafts.has(key))saveCriterionDraftByKey(key,{silent:true,reason:"navigation"}).catch(()=>{});
-  }
+  // v2.2.4: navegar não grava formulário. Apenas o botão Salvar inicia persistência.
   qsa(".view").forEach(v=>v.classList.remove("active"));$(name+"View")?.classList.add("active");if(name==="priorities")renderPriorityShell(state.currentPriority||"Identidade");qsa(".nav-button[data-view]").forEach(b=>b.classList.toggle("active",b.dataset.view===name));$("viewTitle").textContent=VIEW_TITLES[name]||name;$("sidebar").classList.remove("open");uiStateWrite();try{if(name==="priorities")await loadPriorities({background:false});else if(name==="planner")await loadPlanner({background:false});else if(name==="timeline")await loadTimeline({background:false});else if(name==="reports")await loadReports({background:false});else if(name==="requirements")await loadRequirements({background:false});else if(name==="myChurch")await loadMyChurch({background:false});else if(name==="admin")await loadDeveloper({background:false})}catch(e){toast(e.message)}}
 function openPriority(area){
   state.currentPriority=area||"Identidade";
@@ -1002,10 +1141,8 @@ function renderPriorities(){
   const visible=rows.filter(r=>{const p=pct(reachedFor(r.requisito_id),effectiveGoal(r));const s=p>=100?"Concluído":p>=60?"Em andamento":"Atenção";return status==="Todos"||s===status});
   $("criteriaListV51").innerHTML=visible.map((r,i)=>{const p=pct(reachedFor(r.requisito_id),effectiveGoal(r));const s=p>=100?"Concluído":p>=60?"Em andamento":"Atenção";return`<button class="criterion-v51 ${state.selectedRequirementId===r.requisito_id?"active":""}" data-id="${r.requisito_id}"><b>${String(i+1).padStart(2,"0")}</b><span><strong>${esc(r.titulo)}</strong><small>${s}</small></span><em>${Math.round(p)}%</em></button>`}).join("");
   qsa(".criterion-v51").forEach(b=>b.onclick=()=>{
-    if(state.selectedRequirementId&&criterionDraftFor(state.selectedRequirementId)){
-      const oldKey=criterionDraftKey(state.selectedRequirementId);
-      saveCriterionDraftByKey(oldKey,{silent:true,reason:"switch"}).catch(()=>{});
-    }
+    // v2.2.4: mudar de critério nunca inicia gravação.
+    // Rascunhos não salvos continuam apenas no front/sessionStorage.
     state.selectedRequirementId=b.dataset.id;
     renderCriterion();
   });
@@ -1069,12 +1206,6 @@ async function saveCriterionDraftByKey(key,options={}){
   const draft=criterionDrafts.get(key);
   if(!draft)return;
 
-  const existingPending=criterionPendingSaves.get(key);
-  if(existingPending){
-    // A revisão mais nova ficará agendada após a operação atual.
-    return existingPending;
-  }
-
   const revision=Number(draft.revision||0);
   const goalReq=state.requirements.find(x=>String(x.requisito_id)===String(draft.requisito_id));
   const goal=goalReq?effectiveGoal(goalReq):0;
@@ -1087,7 +1218,7 @@ async function saveCriterionDraftByKey(key,options={}){
     if(state.selectedRequirementId===draft.requisito_id){
       $("reachedInputV51").value=String(goal);updateLive();
     }
-    if(!options.silent)toast(`O valor alcançado não pode ser maior que a meta (${fmt(goal)}).`);
+    toast(`O valor alcançado não pode ser maior que a meta (${fmt(goal)}).`);
     return;
   }
 
@@ -1104,44 +1235,32 @@ async function saveCriterionDraftByKey(key,options={}){
     material:draft.values.material||""
   };
 
-  criterionSaveStatus.set(key,"saving");
-  if(criterionDraftKey()===key)criterionButtonState();
-
-  // Atualização otimista apenas no estado em memória; não redesenha o formulário.
+  // 1. Clique em Salvar = compromisso local imediato.
   patchLocalResult(payload);
+  criterionSaveStatus.set(key,"saving");
+  criterionButtonState();
+  updatePriorityVisualsOnly();
+  setSyncState("Sincronizando","sync");
 
+  // 2. A chamada à planilha ocorre em background. Não bloqueia navegação.
   const promise=(async()=>{
     try{
       const r=await api("save_result",payload);
       patchLocalResult(payload,r.resultado_id||"");
-      criterionSaveStatus.set(key,"saved");
-      clearCriterionDraftIfRevision(key,revision);
-
-      if(criterionDraftKey()===key){
-        criterionButtonState();
-        setTimeout(()=>{
-          if(criterionSaveStatus.get(key)==="saved"){
-            criterionSaveStatus.set(key,"idle");criterionButtonState();
-          }
-        },1300);
-      }
-
-      setSyncState("Conectado","ok");
       cacheInvalidate(["priorities","dashboard"]);
-      syncPrioritiesDerivedBackground().catch(()=>{});
 
-      // Se o usuário alterou este mesmo requisito enquanto salvava, salva a nova revisão depois.
-      const newer=criterionDrafts.get(key);
-      if(newer&&Number(newer.revision||0)>revision){
-        setTimeout(()=>saveCriterionDraftByKey(key,{silent:true,reason:"revision"}).catch(()=>{}),120);
-      }
+      // 3. Validação explícita Planilha x front também acontece em background.
+      await verifyCriterionSavedInBackground(payload,key,revision);
+
+      // Atualiza derivados sem reconstruir o critério que o usuário estiver preenchendo.
+      syncPrioritiesDerivedBackground().catch(()=>{});
       return r;
     }catch(e){
       criterionSaveStatus.set(key,"error");
       if(criterionDraftKey()===key)criterionButtonState();
       setSyncState("Erro de sincronização","error");
-      if(!options.silent)toast(e.message||"Não foi possível salvar.");
-      else console.warn("Autosave de requisito:",e);
+      console.error("Erro ao salvar requisito:",e);
+      if(!options.silent)toast(e.message||"Não foi possível sincronizar o resultado.");
       throw e;
     }finally{
       criterionPendingSaves.delete(key);
@@ -1689,7 +1808,7 @@ function renderFofa(){
   qsa("[data-fofa-item]").forEach(card=>{
     const itemId=card.dataset.fofaItem;
     qsa("[data-fofa-field]",card).forEach(field=>{
-      const handler=()=>scheduleFofaAutosave(itemId);
+      const handler=()=>rememberFofaDraft(itemId);
       field.addEventListener("input",handler);
       field.addEventListener("change",handler);
     });
@@ -1721,18 +1840,15 @@ async function confirmStartFofa(){
 
 async function saveFofaItem(itemId,options={}){
   if(!state.fofaCurrent?.evaluation?.avaliacao_id){
-    if(!options.silent)toast("Inicie uma avaliação FOFA.");
+    toast("Inicie uma avaliação FOFA.");
     return;
   }
 
-  let draft=fofaDraftFor(itemId);
-  if(!draft)draft=fofaCaptureCard(itemId);
+  // Captura o conteúdo exatamente no momento do clique Salvar.
+  const draft=fofaCaptureCard(itemId);
   if(!draft)return;
 
   const key=draft.key;
-  const existingPending=fofaPendingSaves.get(key);
-  if(existingPending)return existingPending;
-
   const revision=Number(draft.revision||0);
   const payload={
     avaliacao_id:state.fofaCurrent.evaluation.avaliacao_id,
@@ -1745,37 +1861,26 @@ async function saveFofaItem(itemId,options={}){
     alinhamento:draft.values.alinhamento||""
   };
 
+  // Front recebe imediatamente aquilo que o usuário decidiu salvar.
+  patchLocalFofaResponse(itemId,payload,{});
   fofaSaveStatus.set(key,"saving");
   updateFofaButtonState(itemId);
+  setSyncState("Sincronizando","sync");
 
   const promise=(async()=>{
     try{
       const r=await api("save_fofa_response",payload);
+
+      // Não chama loadFofa()/renderFofa(): o item seguinte não perde conteúdo.
       patchLocalFofaResponse(itemId,payload,r||{});
-      fofaSaveStatus.set(key,"saved");
-      clearFofaDraftIfRevision(key,revision);
-      updateFofaButtonState(itemId);
-
-      setTimeout(()=>{
-        if(fofaSaveStatus.get(key)==="saved"){
-          fofaSaveStatus.set(key,"idle");
-          updateFofaButtonState(itemId);
-        }
-      },1300);
-
-      // Não chama loadFofa/renderFofa aqui. O próximo item em edição permanece intacto.
-      refreshFofaMetadataBackground().catch(()=>{});
-
-      const newer=fofaDrafts.get(key);
-      if(newer&&Number(newer.revision||0)>revision){
-        setTimeout(()=>saveFofaItem(itemId,{silent:true,reason:"revision"}).catch(()=>{}),120);
-      }
+      await verifyFofaSavedInBackground(itemId,payload,key,revision);
       return r;
     }catch(e){
       fofaSaveStatus.set(key,"error");
       updateFofaButtonState(itemId);
-      if(!options.silent)toast(e.message||"Não foi possível salvar o item FOFA.");
-      else console.warn("Autosave FOFA:",e);
+      setSyncState("Erro de sincronização","error");
+      console.error("Erro ao salvar FOFA:",e);
+      if(!options.silent)toast(e.message||"Não foi possível sincronizar o item FOFA.");
       throw e;
     }finally{
       fofaPendingSaves.delete(key);
@@ -1788,7 +1893,11 @@ async function saveFofaItem(itemId,options={}){
 
 async function concludeFofa(){
   if(!state.fofaCurrent?.evaluation?.avaliacao_id)return;
-  await flushFofaDrafts();
+  try{
+    await flushFofaDrafts();
+  }catch(e){
+    return toast(e.message);
+  }
   await refreshFofaMetadataBackground();
   const answered=Number(state.fofaProgress?.answered||0),total=Number(state.fofaProgress?.total||state.fofaItems.length||0);
   if(!answered)return toast("Avaliação vazia. Registre respostas antes de concluir.");
@@ -2274,8 +2383,8 @@ function bind(){
   ["goalInputV51","reachedInputV51"].forEach(id=>bindInput(id,updateLive));
   ["actionPlanV51","reachedInputV51","responsibleInputV51","dateInputV51","dateEndInputV222","voteInputV51","materialInputV51"]
     .forEach(id=>{
-      bindInput(id,()=>{if(id==="reachedInputV51")updateLive();scheduleCriterionAutosave()});
-      bindChange(id,()=>{if(id==="reachedInputV51")updateLive();scheduleCriterionAutosave()});
+      bindInput(id,()=>{if(id==="reachedInputV51")updateLive();rememberCriterionDraft()});
+      bindChange(id,()=>{if(id==="reachedInputV51")updateLive();rememberCriterionDraft()});
     });
   bindClick("saveCriterionV51",saveCriterion);
 
