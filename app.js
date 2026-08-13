@@ -465,6 +465,7 @@ function uiStateWrite(){
   try{
     const active=document.querySelector(".view.active")?.id||"dashboardView";
     sessionStorage.setItem("prioridades_ui_state",JSON.stringify({
+      usuario_id:String(state.user?.usuario_id||""),
       view:active.replace(/View$/,""),
       priority:state.currentPriority||"Identidade",
       periodMode:$("periodMode")?.value||"ano",
@@ -488,9 +489,42 @@ function uiStateRead(){
     return raw?JSON.parse(raw):null;
   }catch(_e){return null}
 }
+
+function clearFreshLoginUiState(){
+  sessionStorage.removeItem("prioridades_ui_state");
+  sessionStorage.removeItem("prioridades_criterion_drafts");
+  sessionStorage.removeItem("prioridades_fofa_drafts");
+  criterionDrafts.clear();
+  fofaDrafts.clear();
+
+  // Evita mostrar, mesmo por instantes, Dashboard/contexto de outro acesso.
+  localStorage.removeItem("prioridades_cache_dashboard");
+  localStorage.removeItem("prioridades_dashboard");
+  cacheInvalidate(["dashboard","priorities","planner","timeline","reports","requirements","myChurch","developer"]);
+}
+
+function resetTerritoryFiltersForFreshLogin(){
+  const f=state.scope?.filtros||{};
+
+  if($("poleFilter") && f.permitir_todos_polos){
+    $("poleFilter").value="";
+  }
+  fillDistricts();
+
+  if($("districtFilter") && f.permitir_todos_distritos){
+    $("districtFilter").value="";
+  }
+  fillChurches();
+
+  if($("churchFilter") && f.permitir_todas_igrejas && !f.igreja_fixa){
+    $("churchFilter").value="";
+  }
+}
+
 function restoreUiControls(){
   const s=uiStateRead();
   if(!s)return;
+  if(s.usuario_id && String(s.usuario_id)!==String(state.user?.usuario_id||""))return;
   if(s.periodMode&&$("periodMode"))$("periodMode").value=s.periodMode;
   [["yearSingle",s.yearSingle],["monthSingle",s.monthSingle],["yearStart",s.yearStart],["yearEnd",s.yearEnd],
    ["monthStart",s.monthStart],["monthEnd",s.monthEnd],["dateStart",s.dateStart],["dateEnd",s.dateEnd]]
@@ -509,7 +543,8 @@ function restoreUiControls(){
 }
 async function restoreUiView(){
   const s=uiStateRead();
-  const view=s?.view||"dashboard";
+  const sameUser=!s?.usuario_id||String(s.usuario_id)===String(state.user?.usuario_id||"");
+  const view=sameUser?(s?.view||"dashboard"):"dashboard";
   const target=VIEW_TITLES[view]?view:"dashboard";
   await showView(target,{restore:true});
 }
@@ -648,11 +683,13 @@ function selectedChurchId(){return currentRequest().igreja_id}
 function selectedChurch(){const id=selectedChurchId();return(state.scope.igrejas||[]).find(x=>x.igreja_id===id)||null}
 
 function setLoginProgress(step,title,text){
-  const box=$("loginProgressV20");if(!box)return;box.classList.remove("hidden-v111");
+  const box=$("loginProgressV20");if(!box)return;
+  box.classList.remove("hidden-v111");
+  box.classList.add("sequential-pulse-v224r1");
   qsa("#loginProgressV20 [data-login-step]").forEach(el=>{const n=Number(el.dataset.loginStep||0);el.classList.toggle("done",n<step);el.classList.toggle("active",n===step);el.classList.toggle("pending",n>step)});
   $("loginProgressTitleV20").textContent=title||"";$("loginProgressTextV20").textContent=text||"";
 }
-function resetLoginProgress(){const box=$("loginProgressV20");if(!box)return;box.classList.add("hidden-v111");qsa("#loginProgressV20 [data-login-step]").forEach(el=>el.classList.remove("done","active","pending"))}
+function resetLoginProgress(){const box=$("loginProgressV20");if(!box)return;box.classList.add("hidden-v111");box.classList.remove("sequential-pulse-v224r1");qsa("#loginProgressV20 [data-login-step]").forEach(el=>el.classList.remove("done","active","pending"))}
 function finishLoginProgress(){setLoginProgress(4,"Tudo pronto!","Ambiente carregado com sucesso.");qsa("#loginProgressV20 [data-login-step]").forEach(el=>{el.classList.add("done");el.classList.remove("active","pending")})}
 
 async function login(){
@@ -674,14 +711,16 @@ async function login(){
     state.user=r.user;
     state.modules=r.modules||[];
     state.scope=r.scope||state.scope;
-    authSnapshotWrite();
+
+    // Login digitado é uma nova entrada no sistema:
+    // não herda igreja/filtros de uma sessão anterior.
+    clearFreshLoginUiState();
 
     applyModules();
     setupTerritory();
+    resetTerritoryFiltersForFreshLogin();
     renderProfile();
     authSnapshotWrite();
-    restoreUiControls();
-    restoreUiControls();
 
     setLoginProgress(3,"Preparando seu ambiente...","Abrindo o sistema enquanto os indicadores sincronizam.");
 
@@ -700,7 +739,7 @@ async function login(){
     // Acesso visual imediato: Dashboard não bloqueia mais a entrada.
     finishLoginProgress();
     startApp();
-    await restoreUiView();
+    await showView("dashboard",{freshLogin:true});
     resetLoginProgress();
 
     setSyncState("Sincronizando","sync");
@@ -1206,14 +1245,6 @@ async function saveCriterionDraftByKey(key,options={}){
   const draft=criterionDrafts.get(key);
   if(!draft)return;
 
-  // Ignora cliques repetidos em Salvar enquanto a gravação anterior
-  // deste mesmo critério ainda está em andamento. Sem isso, cliques
-  // rápidos seguidos (comuns quando o usuário acha que travou) disparam
-  // requisições concorrentes que podiam gerar registros duplicados.
-  if(criterionSaveStatus.get(key)==="saving"){
-    return;
-  }
-
   const revision=Number(draft.revision||0);
   const goalReq=state.requirements.find(x=>String(x.requisito_id)===String(draft.requisito_id));
   const goal=goalReq?effectiveGoal(goalReq):0;
@@ -1339,30 +1370,7 @@ async function saveTask(){
     toast(e.message||"Não foi possível salvar a tarefa.");
   }
 }
-async function reauth(){
-  // window.prompt() pode falhar silenciosamente (retornar vazio sem
-  // chegar a aparecer) em PWA instalado na tela inicial e em alguns
-  // navegadores. Antes, isso fazia a ação inteira abortar sem
-  // explicação. Agora avisamos o usuário nesse caso específico.
-  let senha;
-  try{
-    senha=prompt("Confirme sua senha para continuar:");
-  }catch(_e){
-    toast("Não foi possível abrir a confirmação de senha neste navegador/app. Tente pelo navegador padrão do aparelho.");
-    return "";
-  }
-  if(!senha){
-    toast("Confirmação de senha cancelada — nada foi salvo.");
-    return "";
-  }
-  try{
-    const r=await api("reauth",{senha});
-    return String(r.reauth_token||"");
-  }catch(e){
-    toast(e.message);
-    return "";
-  }
-}
+async function reauth(){const senha=prompt("Confirme sua senha para continuar:");if(!senha)return "";try{const r=await api("reauth",{senha});return String(r.reauth_token||"")}catch(e){toast(e.message);return ""}}
 async function deleteTask(){const reauthToken=await reauth();if(!reauthToken)return;loading(true,"Excluindo tarefa...");try{await api("delete_planner_task",{tarefa_id:$("taskId").value,reauth_token:reauthToken});closeModalById("taskModal");cacheInvalidate(["planner","timeline"]);await loadPlanner({background:true});toast("Tarefa excluída.")}finally{loading(false)}}
 async function loadTimeline(options={}){const cached=cacheGet("timeline");if(cached){state.planner=cached;renderTimeline()}if(!options.background&&!cached)moduleBusy("timelineView",true,"Atualizando linha do tempo...");try{const r=await once(cacheKey("timeline"),()=>api("timeline",currentRequest()));state.planner=r.data||[];cacheSet("timeline",state.planner);renderTimeline();return state.planner}catch(e){if(!cached)throw e;return cached}finally{moduleBusy("timelineView",false)}}
 function renderTimeline(){
@@ -2219,13 +2227,9 @@ async function openUser(id=""){
   }catch(e){toast(e.message||"Não foi possível abrir o cadastro de usuário.");console.error(e)}
 }
 async function saveUser(){
-  // Correção: saveUserAdmin_ no backend NUNCA exigiu reauth_token (só
-  // excluir/desativar/resetar senha/remover foto exigem). Pedir senha
-  // aqui era desnecessário — e usava window.prompt(), que em PWA
-  // instalado (tela inicial do celular) e em alguns navegadores pode
-  // retornar vazio na hora, sem nem chegar a aparecer visualmente.
-  // Quando isso acontecia, a função saía sem chamar a API e sem
-  // mostrar nenhum erro: parecia que "nada acontecia" ao salvar.
+  const reauthToken=await reauth();
+  if(!reauthToken)return;
+
   const btn=$("saveUserButton");
   const modulos=qsa("#userModulesChecks input").map(x=>({modulo_id:x.value,permitido:x.checked}));
   const payload={
