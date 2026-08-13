@@ -20,7 +20,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./styles.css?v=2.2.1">
+  <link rel="stylesheet" href="./styles.css?v=2.2.2">
 
 </head>
 <body>
@@ -42,7 +42,7 @@
   </div>
   <div class="login-progress-copy-v20"><strong id="loginProgressTitleV20">Validando acesso...</strong><span id="loginProgressTextV20">Conectando ao ambiente seguro.</span></div>
 </div>
-      <small>Desenvolvido por Kevin Fernandes · © 2026 · Versão 2.2.1</small>
+      <small>Desenvolvido por Kevin Fernandes · © 2026 · Versão 2.2.2</small>
       <div id="loginMessage" class="inline-message"></div>
     </div>
   </section>
@@ -84,7 +84,6 @@
         <div class="top-actions">
           <span id="syncBadge" class="sync-badge"><i></i>Sincronizando</span>
           <button id="presentationButton" class="icon-action" title="Modo apresentação">⛶</button>
-          <button id="refreshButton" class="primary refresh-icon-only-v118" title="Atualizar Sistema" aria-label="Atualizar Sistema"><span id="refreshIcon">↻</span></button>
         </div>
       </header>
 
@@ -158,10 +157,20 @@
             <div class="criterion-content-v7">
               <div class="instruction-grid-v7"><section><span>Direcionamento do Campo</span><p id="criterionDescriptionV51">—</p></section><section><span>Pergunta para a Igreja Local</span><p id="criterionQuestionV51">—</p></section></div>
               <label class="action-plan-v7"><span>Plano de ação da igreja</span><textarea id="actionPlanV51" placeholder="Descreva aqui como a igreja realizará este requisito..."></textarea></label>
+              <div class="criterion-support-fields-v222">
+                <label><span>Responsável pelo requisito</span><input id="responsibleInputV51"></label>
+                <label><span>Material necessário</span><input id="materialInputV51"></label>
+              </div>
             </div>
             <aside class="criterion-form-v7">
               <div class="result-card-v7"><span>Resultado</span><strong id="livePercentV51">0%</strong><div><i id="liveProgressV51"></i></div></div>
-              <div class="form-grid-v7"><label><span>Meta</span><input id="goalInputV51" type="number" min="0"></label><label><span>Alcançado</span><input id="reachedInputV51" type="number" min="0"></label><label><span>Responsável</span><input id="responsibleInputV51"></label><label><span>Data inicial</span><input id="dateInputV51" type="date"></label><label><span>Nº do voto</span><input id="voteInputV51"></label><label><span>Material necessário</span><input id="materialInputV51"></label></div>
+              <div class="form-grid-v7">
+                <label><span>Meta</span><input id="goalInputV51" type="number" min="0"></label>
+                <label><span>Alcançado</span><input id="reachedInputV51" type="number" min="0"></label>
+                <label><span>Data inicial</span><input id="dateInputV51" type="date"></label>
+                <label><span>Data final</span><input id="dateEndInputV222" type="date"></label>
+                <label class="wide-v222"><span>Nº do voto</span><input id="voteInputV51"></label>
+              </div>
               <button id="saveCriterionV51" class="save-button-v7">Salvar</button>
             </aside>
           </div>
@@ -317,7 +326,7 @@
         </article>
       </section>
 
-      <footer><span>Desenvolvido por Kevin Fernandes · © 2026 · Versão 2.2.1</span><span id="lastUpdate">Última atualização: —</span></footer>
+      <footer><span>Desenvolvido por Kevin Fernandes · © 2026 · Versão 2.2.2</span><span id="lastUpdate">Última atualização: —</span></footer>
     </main>
   </div>
 
@@ -366,7 +375,8 @@
       </div>
 
       <div class="user-modal-actions">
-        <button id="saveUserButton" class="primary">Salvar usuário</button>
+        <button id="deleteUserButtonV222" class="danger-action hidden" type="button">Excluir usuário</button>
+        <button id="saveUserButton" class="primary" type="button">Salvar</button>
       </div>
     </div>
   </div>
@@ -480,7 +490,7 @@
   <div id="toast" class="toast"></div>
 
   <script src="./config.js"></script>
-  <script src="./app.js?v=2.2.1"></script>
+  <script src="./app.js?v=2.2.2"></script>
 
 
 </body>
