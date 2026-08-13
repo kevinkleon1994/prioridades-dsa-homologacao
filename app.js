@@ -429,6 +429,29 @@ async function refreshCurrentModule(){
 }
 
 
+
+/* v2.2.5 — Performance Enterprise / Navegação Instantânea */
+const ENTERPRISE_CACHE_V225={stale:60*60*1000,prefix:"prioridades_v225_"};
+function contextSignatureV225(){const r=currentRequest();return [state.user?.usuario_id,r.polo_id,r.distrito_id,r.igreja_id,r.periodo,r.ano,r.mes,r.ano_inicio,r.ano_fim,r.data_inicio,r.data_fim].map(x=>String(x||"")).join("|")}
+function enterpriseKeyV225(name){return ENTERPRISE_CACHE_V225.prefix+name+"::"+contextSignatureV225()}
+function enterpriseReadV225(name){try{const raw=localStorage.getItem(enterpriseKeyV225(name));if(!raw)return null;const o=JSON.parse(raw);if(!o?.savedAt||Date.now()-o.savedAt>ENTERPRISE_CACHE_V225.stale)return null;return o}catch(_e){return null}}
+function enterpriseWriteV225(name,data){try{localStorage.setItem(enterpriseKeyV225(name),JSON.stringify({savedAt:Date.now(),data}))}catch(_e){}}
+function stableStringifyV225(v){try{return JSON.stringify(v)}catch(_e){return String(Date.now())}}
+function changedV225(a,b){return stableStringifyV225(a)!==stableStringifyV225(b)}
+function startBackgroundV225(p){Promise.resolve(p).catch(e=>console.warn("Background v2.2.5:",e))}
+function viewIsActiveV225(name){return !!document.querySelector(`#${name}View.active`)}
+function renderCachedModuleV225(name,s){
+  if(!s?.data)return false;const d=s.data;
+  if(name==="dashboard"){state.dashboard=d;state.context={...state.context,...(d.context||{})};renderDashboard(d);renderContext();return true}
+  if(name==="priorities"){state.requirements=d.requirements||[];state.results=d.results||[];renderPriorities();return true}
+  if(name==="planner"){state.tasks=d.tasks||[];renderPlanner();return true}
+  if(name==="timeline"){state.timeline=d.timeline||[];renderTimeline();return true}
+  if(name==="requirements"){state.requirements=d.requirements||[];state.goals=d.goals||[];renderRequirements();return true}
+  if(name==="myChurch"){state.churchProfile=d.profile||{};state.departments=d.departments||[];state.churchDepartments=d.churchDepartments||[];renderMyChurch();return true}
+  if(name==="reports"){state.reports=d.reports||[];state.difficulties=d.difficulties||[];renderReports();return true}
+  if(name==="developer"){state.users=d.users||[];renderUsers();return true}
+  return false;
+}
 const PERF={ttl:{bootstrap:300000,dashboard:60000,priorities:300000,planner:45000,timeline:45000,reports:60000,requirements:300000,myChurch:120000,developer:120000},memory:new Map(),inflight:new Map()};
 function cacheContextKey(){return JSON.stringify(currentRequest())}
 function cacheKey(name,extra=""){return `${name}|${extra||cacheContextKey()}`}
@@ -918,14 +941,8 @@ function prefetchCoreModules(){
 }
 
 function schedulePrefetchCoreModules(){
-  const run=()=>prefetchCoreModules().catch(()=>{});
-
-  // Dá prioridade absoluta ao Dashboard e à interação do usuário.
-  if("requestIdleCallback" in window){
-    requestIdleCallback(run,{timeout:3000});
-  }else{
-    setTimeout(run,1800);
-  }
+  setTimeout(()=>{startBackgroundV225(loadPriorities({background:true}));startBackgroundV225(loadPlanner({background:true}));startBackgroundV225(loadRequirements({background:true}))},500);
+  setTimeout(()=>{startBackgroundV225(loadTimeline({background:true}));startBackgroundV225(loadMyChurch({background:true}));startBackgroundV225(loadReports({background:true}))},1800);
 }
 
 function renderProfile(){
@@ -981,42 +998,12 @@ function renderContext(){
 }
 async function applyFilters(){setSyncState("Aplicando filtros","sync");cacheInvalidate(["dashboard","priorities","planner","timeline","reports","requirements","myChurch"]);try{await loadDashboard({background:false});const active=document.querySelector(".view.active")?.id;if(active==="prioritiesView")await loadPriorities({background:false});else if(active==="plannerView")await loadPlanner({background:false});else if(active==="timelineView")await loadTimeline({background:false});else if(active==="reportsView")await loadReports({background:false});else if(active==="requirementsView")await loadRequirements({background:false});else if(active==="myChurchView")await loadMyChurch({background:false})}catch(e){toast(e.message)}finally{setSyncState("Conectado","ok")}}
 async function loadDashboard(options={}){
-  const background=!!options.background;
-  const cached=cacheGet("dashboard")||dashboardCacheRead();
-
-  if(cached){
-    state.dashboard=cached;
-    state.context={...state.context,...cached.context};
-    cacheSet("dashboard",cached);
-    renderDashboard(cached);
-    renderContext();
-  }else{
-    renderDashboardShell();
-  }
-
-  setSyncState("Sincronizando","sync");
-
-  try{
-    const r=await once(
-      cacheKey("dashboard"),
-      ()=>api("dashboard",currentRequest())
-    );
-
-    state.dashboard=r;
-    state.context={...state.context,...r.context};
-    cacheSet("dashboard",r);
-    localCacheWrite("dashboard",r);
-
-    renderDashboard(r);
-    renderContext();
-    setSyncState("Conectado","ok");
-
-    return r;
-  }catch(e){
-    setSyncState("Erro de sincronização","error");
-    if(!cached)throw e;
-    return cached;
-  }
+  const before=state.dashboard||null;
+  const d=await api("dashboard",currentRequest());
+  state.dashboard=d;state.context={...state.context,...(d.context||{})};
+  enterpriseWriteV225("dashboard",d);cacheSet("dashboard",d);localCacheWrite("dashboard",d);
+  if(viewIsActiveV225("dashboard")&&(changedV225(before,d)||!options.background)){renderDashboard(d);renderContext()}
+  return d;
 }
 function renderDashboardShell(){
   // Mantém estrutura estável enquanto sincroniza e evita tela congelada.
@@ -1104,8 +1091,35 @@ function renderDashboard(d){
 
 
 async function showView(name,options={}){
-  // v2.2.4: navegar não grava formulário. Apenas o botão Salvar inicia persistência.
-  qsa(".view").forEach(v=>v.classList.remove("active"));$(name+"View")?.classList.add("active");if(name==="priorities")renderPriorityShell(state.currentPriority||"Identidade");qsa(".nav-button[data-view]").forEach(b=>b.classList.toggle("active",b.dataset.view===name));$("viewTitle").textContent=VIEW_TITLES[name]||name;$("sidebar").classList.remove("open");uiStateWrite();try{if(name==="priorities")await loadPriorities({background:false});else if(name==="planner")await loadPlanner({background:false});else if(name==="timeline")await loadTimeline({background:false});else if(name==="reports")await loadReports({background:false});else if(name==="requirements")await loadRequirements({background:false});else if(name==="myChurch")await loadMyChurch({background:false});else if(name==="admin")await loadDeveloper({background:false})}catch(e){toast(e.message)}}
+  qsa(".view").forEach(v=>v.classList.remove("active"));
+  $(name+"View")?.classList.add("active");
+  qsa(".nav-button[data-view]").forEach(b=>b.classList.toggle("active",b.dataset.view===name));
+  $("viewTitle").textContent=VIEW_TITLES[name]||name;
+  $("sidebar").classList.remove("open");
+  uiStateWrite();
+
+  const snapshot=enterpriseReadV225(name);
+  const rendered=renderCachedModuleV225(name,snapshot);
+  setSyncState(rendered?"Atualizando em segundo plano":"Carregando dados","sync");
+
+  startBackgroundV225((async()=>{
+    try{
+      if(name==="dashboard")await loadDashboard({background:true});
+      else if(name==="priorities")await loadPriorities({background:true});
+      else if(name==="planner")await loadPlanner({background:true});
+      else if(name==="timeline")await loadTimeline({background:true});
+      else if(name==="reports")await loadReports({background:true});
+      else if(name==="requirements")await loadRequirements({background:true});
+      else if(name==="myChurch")await loadMyChurch({background:true});
+      else if(name==="developer")await loadDeveloper({background:true});
+      setSyncState("Conectado","ok");
+    }catch(e){
+      setSyncState("Erro de sincronização","error");
+      if(!rendered)toast(e.message||"Não foi possível carregar o módulo.");
+    }
+  })());
+  return true;
+}
 function openPriority(area){
   state.currentPriority=area||"Identidade";
   state.selectedRequirementId="";
@@ -1146,7 +1160,14 @@ function renderPriorityShell(area){
   $("criterionQuestionV51").textContent="—";
 }
 
-async function loadPriorities(options={}){const cached=cacheGet("priorities");if(cached){state.requirements=cached.requirements||[];state.results=cached.results||[];if(!options.prefetch)renderPriorities()}if(!options.background&&!cached)moduleBusy("prioritiesView",true,"Atualizando prioridades...");try{const data=await once(cacheKey("priorities"),async()=>{const [rq,rs]=await Promise.all([api("list_requirements",currentRequest()),api("list_results",currentRequest())]);return{requirements:rq.data||[],results:rs.data||[]}});state.requirements=data.requirements;state.results=data.results;cacheSet("priorities",data);if(!options.prefetch||document.querySelector("#prioritiesView.active"))renderPriorities();return data}catch(e){if(!cached)throw e;return cached}finally{moduleBusy("prioritiesView",false)}}
+async function loadPriorities(options={}){
+  const before={requirements:state.requirements||[],results:state.results||[]};
+  const [rq,rs]=await Promise.all([api("list_requirements",currentRequest()),api("list_results",currentRequest())]);
+  const next={requirements:rq.data||[],results:rs.data||[]};
+  state.requirements=next.requirements;state.results=next.results;enterpriseWriteV225("priorities",next);cacheSet("priorities",next);
+  if(viewIsActiveV225("priorities")&&(changedV225(before,next)||!options.background))renderPriorities();
+  return next;
+}
 function effectiveGoal(req){
   const year=Number(String(state.context.data_inicio||$("yearSingle").value).slice(0,4));const e=(req.metas_efetivas||[]).find(x=>+x.ano===year);return e?num(e.meta):num(req.meta_padrao)
 }
@@ -1310,7 +1331,12 @@ async function saveCriterionDraftByKey(key,options={}){
   return promise;
 }
 
-async function loadPlanner(options={}){const cached=cacheGet("planner");if(cached){state.planner=cached;if(!options.prefetch)renderPlanner()}if(!options.background&&!cached)moduleBusy("plannerView",true,"Atualizando Planner...");try{const r=await once(cacheKey("planner"),()=>api("list_planner",currentRequest()));state.planner=r.data||[];cacheSet("planner",state.planner);if(!options.prefetch||document.querySelector("#plannerView.active"))renderPlanner();return state.planner}catch(e){if(!cached)throw e;return cached}finally{moduleBusy("plannerView",false)}}
+async function loadPlanner(options={}){
+  const before=(state.tasks||[]).slice();const r=await api("list_planner",currentRequest());const next=r.data||[];
+  state.tasks=next;enterpriseWriteV225("planner",{tasks:next});cacheSet("planner",next);
+  if(viewIsActiveV225("planner")&&(changedV225(before,next)||!options.background))renderPlanner();
+  return next;
+}
 function renderPlanner(){
   const statuses=["Não iniciado","Em andamento","Concluído"];
   $("kanbanBoard").innerHTML=statuses.map(s=>`<section class="kanban-column"><h3>${s}</h3>${state.planner.filter(t=>t.status===s).map(t=>{
@@ -1372,7 +1398,12 @@ async function saveTask(){
 }
 async function reauth(){const senha=prompt("Confirme sua senha para continuar:");if(!senha)return "";try{const r=await api("reauth",{senha});return String(r.reauth_token||"")}catch(e){toast(e.message);return ""}}
 async function deleteTask(){const reauthToken=await reauth();if(!reauthToken)return;loading(true,"Excluindo tarefa...");try{await api("delete_planner_task",{tarefa_id:$("taskId").value,reauth_token:reauthToken});closeModalById("taskModal");cacheInvalidate(["planner","timeline"]);await loadPlanner({background:true});toast("Tarefa excluída.")}finally{loading(false)}}
-async function loadTimeline(options={}){const cached=cacheGet("timeline");if(cached){state.planner=cached;renderTimeline()}if(!options.background&&!cached)moduleBusy("timelineView",true,"Atualizando linha do tempo...");try{const r=await once(cacheKey("timeline"),()=>api("timeline",currentRequest()));state.planner=r.data||[];cacheSet("timeline",state.planner);renderTimeline();return state.planner}catch(e){if(!cached)throw e;return cached}finally{moduleBusy("timelineView",false)}}
+async function loadTimeline(options={}){
+  const before=(state.timeline||[]).slice();const r=await api("list_timeline",currentRequest());const next=r.data||[];
+  state.timeline=next;enterpriseWriteV225("timeline",{timeline:next});cacheSet("timeline",next);
+  if(viewIsActiveV225("timeline")&&(changedV225(before,next)||!options.background))renderTimeline();
+  return next;
+}
 function renderTimeline(){
   $("timelineList").innerHTML=state.planner.map(t=>{
     const title=t.requisito_titulo||t.titulo||"Tarefa";
@@ -1381,39 +1412,11 @@ function renderTimeline(){
   }).join("")||'<div class="empty-v111">Nenhum item na linha do tempo.</div>';
 }
 async function loadRequirements(options={}){
-  const cached=cacheGet("requirements");
-
-  if(cached){
-    state.requirements=cached.requirements||[];
-    state.requirementGoalView=cached;
-    if(!options.prefetch)renderRequirements();
-  }
-
-  if(!options.background&&!cached){
-    moduleBusy("requirementsView",true,"Atualizando requisitos...");
-  }
-
-  try{
-    const r=await once(
-      cacheKey("requirements"),
-      ()=>api("requirement_goal_view",currentRequest())
-    );
-
-    state.requirements=r.requirements||[];
-    state.requirementGoalView=r;
-    cacheSet("requirements",r);
-
-    if(!options.prefetch||document.querySelector("#requirementsView.active")){
-      renderRequirements();
-    }
-
-    return r;
-  }catch(e){
-    if(!cached)throw e;
-    return cached;
-  }finally{
-    moduleBusy("requirementsView",false);
-  }
+  const before={requirements:state.requirements||[],goals:state.goals||[]};
+  const [rq,g]=await Promise.all([api("list_requirements",currentRequest()),api("list_goals",currentRequest())]);
+  const next={requirements:rq.data||[],goals:g.data||[]};state.requirements=next.requirements;state.goals=next.goals;enterpriseWriteV225("requirements",next);cacheSet("requirements",next);
+  if(viewIsActiveV225("requirements")&&(changedV225(before,next)||!options.background))renderRequirements();
+  return next;
 }
 
 function canEditRequirements(){
@@ -1566,7 +1569,15 @@ function plannerChurchOptions(selectedId=""){
   }
 }
 
-async function loadMyChurch(options={}){const id=effectiveMyChurchId(),extra=id||"none",cached=cacheGet("myChurch",extra);if(cached){state.churchProfile=cached.profile||null;state.departments=cached.departments||[];renderMyChurch(cached)}if(!options.background&&!cached)moduleBusy("myChurchView",true,"Atualizando igreja...");try{const r=await once(cacheKey("myChurch",extra),()=>api("get_my_church",{igreja_id:id}));state.churchProfile=r.profile||null;state.departments=r.departments||[];cacheSet("myChurch",r,extra);renderMyChurch(r);return r}catch(e){if(!cached)throw e;return cached}finally{moduleBusy("myChurchView",false)}}
+async function loadMyChurch(options={}){
+  const churchId=selectedChurchId();if(!churchId)return;
+  const before={profile:state.churchProfile||{},departments:state.departments||[],churchDepartments:state.churchDepartments||[]};
+  const r=await api("get_my_church",{...currentRequest(),igreja_id:churchId});
+  const next={profile:r.profile||{},departments:r.departamentos||r.departments||[],churchDepartments:r.igreja_departamentos||r.church_departments||[]};
+  state.churchProfile=next.profile;state.departments=next.departments;state.churchDepartments=next.churchDepartments;enterpriseWriteV225("myChurch",next);cacheSet("myChurch",next);
+  if(viewIsActiveV225("myChurch")&&(changedV225(before,next)||!options.background))renderMyChurch();
+  return next;
+}
 function renderMyChurch(r={}){
   const p=state.churchProfile||{};$("churchProfileName").textContent=p.igreja||"Selecione uma igreja";const disabled=!p.igreja_id;$("churchEldersInput").value=p.quantidade_anciaos||0;$("churchFamiliesInput").value=p.quantidade_familias||0;$("churchUapgsInput").value=p.quantidade_uapgs||0;$("churchFirstElderInput").value=p.primeiro_anciao_diretor||"";$("churchFirstElderPhoneInput").value=p.contato_primeiro_anciao_diretor||"";$("churchAddressInput").value=p.endereco||"";$("churchNotesInput").value=p.observacoes||"";
   $("churchOfficersChecks").innerHTML=(state.departments||[]).map(d=>`<label class="dept-item-v111"><input type="checkbox" data-dept="${d.departamento_id}" ${d.tem_lider?"checked":""}><span><strong>${esc(d.departamento)}</strong><input type="text" data-dept-name="${d.departamento_id}" value="${esc(d.nome_lider||"")}" placeholder="Nome do líder"></span></label>`).join("");
@@ -2026,7 +2037,13 @@ function printStandaloneContent(title,md){
   w.document.close();w.focus();setTimeout(()=>w.print(),250);
 }
 
-async function loadReports(options={}){loadFofaHistory({background:true}).catch(()=>{});const cached=cacheGet("reports");if(cached){state.reports=cached.reports||[];state.difficulties=cached.difficulties||[];renderReports()}if(!options.background&&!cached)moduleBusy("reportsView",true,"Atualizando relatórios...");try{const data=await once(cacheKey("reports"),async()=>{const [r,d]=await Promise.all([api("list_reports",currentRequest()),api("list_difficulties",{})]);return{reports:r.data||[],difficulties:d.data||[]}});state.reports=data.reports;state.difficulties=data.difficulties;cacheSet("reports",data);renderReports();return data}catch(e){if(!cached)throw e;return cached}finally{moduleBusy("reportsView",false)}}
+async function loadReports(options={}){
+  const before={reports:state.reports||[],difficulties:state.difficulties||[]};
+  const [a,b]=await Promise.all([api("list_reports",currentRequest()),api("list_difficulties",currentRequest())]);
+  const next={reports:a.data||[],difficulties:b.data||[]};state.reports=next.reports;state.difficulties=next.difficulties;enterpriseWriteV225("reports",next);cacheSet("reports",next);
+  if(viewIsActiveV225("reports")&&(changedV225(before,next)||!options.background))renderReports();
+  return next;
+}
 
 function standardizedReportTitle(r){
   const church=r?.igreja||selectedChurch()?.igreja||"Igreja";
@@ -2206,7 +2223,12 @@ async function generateAI(){
 async function whatsappSummary(){try{const r=await api("whatsapp_summary",currentRequest());openWhatsAppApp(r.texto||r.text||r.resumo||r.data||"")}catch(e){toast(e.message)}}
 function exportCSV(){const rows=state.results||[];if(!rows.length)return toast("Nenhum resultado carregado.");const keys=["igreja","data_realizacao","prioridade","titulo","alcancado","plano_acao","responsavel"];const csv=[keys,...rows.map(r=>keys.map(k=>r[k]??""))].map(row=>row.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob(["\ufeff"+csv],{type:"text/csv"}));a.download="prioridades-dsa.csv";a.click();URL.revokeObjectURL(a.href)}
 
-async function loadDeveloper(options={}){if(state.user?.perfil!=="Desenvolvedor")return;const cached=cacheGet("developer","global");if(cached){state.developer=cached.developer;state.users=cached.users||[];renderUsers()}if(!options.background&&!cached)moduleBusy("adminView",true,"Atualizando usuários...");try{const data=await once("developer|global",async()=>{const r=await api("developer_bootstrap",{});let users=r.users||r.data?.users||[];if(!users.length){const u=await api("list_users_admin",{});users=u.data||[]}return{developer:r,users}});state.developer=data.developer;state.users=data.users;cacheSet("developer",data,"global");renderUsers();return data}catch(e){if(!cached)throw e;return cached}finally{moduleBusy("adminView",false)}}
+async function loadDeveloper(options={}){
+  const before=(state.users||[]).slice();const r=await api("developer_bootstrap",currentRequest());const next=r.data||[];
+  state.users=next;enterpriseWriteV225("developer",{users:next});cacheSet("developer",next);
+  if(viewIsActiveV225("developer")&&(changedV225(before,next)||!options.background))renderUsers();
+  return next;
+}
 function renderUsers(){const q=($("userSearch").value||"").toLowerCase(),rows=state.users.filter(u=>`${u.nome} ${u.login} ${u.perfil}`.toLowerCase().includes(q));$("usersCount").textContent=`${rows.length} usuário${rows.length===1?"":"s"}`;$("usersTableBody").innerHTML=rows.map(u=>`<tr><td><strong>${esc(u.nome)}</strong></td><td>${esc(u.perfil)}</td><td>${esc(u.polo_id||"")} / ${esc(u.distrito_id||"")} / ${esc(u.igreja_id||"")}</td><td>${esc(u.login)}</td><td>••••••</td><td><span class="access-pill ${u.ativo?"active":"inactive"}"><i></i>${u.ativo?"Ativo":"Inativo"}</span></td><td><div class="user-actions"><button class="user-action edit" data-user="${u.usuario_id}">Editar</button><button class="user-action toggle" data-toggle="${u.usuario_id}">${u.ativo?"Inativar":"Ativar"}</button></div></td></tr>`).join("");qsa("[data-user]").forEach(b=>b.onclick=()=>openUser(b.dataset.user));qsa("[data-toggle]").forEach(b=>b.onclick=()=>toggleUser(b.dataset.toggle))}
 function populateUserTerritory(u={}){
   $("userPoleInput").innerHTML='<option value="">—</option>'+state.scope.polos.map(x=>`<option value="${x.polo_id}">${esc(x.polo)}</option>`).join("");
