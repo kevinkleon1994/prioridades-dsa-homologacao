@@ -707,8 +707,18 @@ function resultRecencyClient_(x){
 }
 function latestResultFor(reqId){
   const churchId=selectedChurchId();
+  // Correção: precisa respeitar o mesmo ano usado por effectiveGoal().
+  // Sem esse filtro, quando existe mais de um registro (um por ano)
+  // para o mesmo critério/igreja, esta função podia pegar o registro
+  // do ano ERRADO (o editado por último), enquanto a meta usada no
+  // cálculo era a do ano selecionado — gerando percentuais que não
+  // batem com o valor realmente salvo (ex.: 9/90% no detalhamento
+  // contra 100% no card da lista).
+  const year=Number(String(state.context.data_inicio||$("yearSingle").value).slice(0,4));
   return (state.results||[])
-    .filter(x=>String(x.requisito_id||"")===String(reqId||"")&&(!churchId||String(x.igreja_id||"")===String(churchId)))
+    .filter(x=>String(x.requisito_id||"")===String(reqId||"")
+      &&(!churchId||String(x.igreja_id||"")===String(churchId))
+      &&(!year||Number(String(x.data_realizacao||"").slice(0,4))===year))
     .sort((a,b)=>resultRecencyClient_(b)-resultRecencyClient_(a))[0]||null;
 }
 function reachedFor(reqId){return num(latestResultFor(reqId)?.alcancado||0)}
