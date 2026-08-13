@@ -1,4 +1,4 @@
-const CACHE = "prioridades-dsa-v2.2.1";
+const CACHE = "prioridades-dsa-v2.2.2";
 
 const ASSETS = [
   "./",
