@@ -1206,6 +1206,14 @@ async function saveCriterionDraftByKey(key,options={}){
   const draft=criterionDrafts.get(key);
   if(!draft)return;
 
+  // Ignora cliques repetidos em Salvar enquanto a gravação anterior
+  // deste mesmo critério ainda está em andamento. Sem isso, cliques
+  // rápidos seguidos (comuns quando o usuário acha que travou) disparam
+  // requisições concorrentes que podiam gerar registros duplicados.
+  if(criterionSaveStatus.get(key)==="saving"){
+    return;
+  }
+
   const revision=Number(draft.revision||0);
   const goalReq=state.requirements.find(x=>String(x.requisito_id)===String(draft.requisito_id));
   const goal=goalReq?effectiveGoal(goalReq):0;
@@ -1331,7 +1339,30 @@ async function saveTask(){
     toast(e.message||"Não foi possível salvar a tarefa.");
   }
 }
-async function reauth(){const senha=prompt("Confirme sua senha para continuar:");if(!senha)return "";try{const r=await api("reauth",{senha});return String(r.reauth_token||"")}catch(e){toast(e.message);return ""}}
+async function reauth(){
+  // window.prompt() pode falhar silenciosamente (retornar vazio sem
+  // chegar a aparecer) em PWA instalado na tela inicial e em alguns
+  // navegadores. Antes, isso fazia a ação inteira abortar sem
+  // explicação. Agora avisamos o usuário nesse caso específico.
+  let senha;
+  try{
+    senha=prompt("Confirme sua senha para continuar:");
+  }catch(_e){
+    toast("Não foi possível abrir a confirmação de senha neste navegador/app. Tente pelo navegador padrão do aparelho.");
+    return "";
+  }
+  if(!senha){
+    toast("Confirmação de senha cancelada — nada foi salvo.");
+    return "";
+  }
+  try{
+    const r=await api("reauth",{senha});
+    return String(r.reauth_token||"");
+  }catch(e){
+    toast(e.message);
+    return "";
+  }
+}
 async function deleteTask(){const reauthToken=await reauth();if(!reauthToken)return;loading(true,"Excluindo tarefa...");try{await api("delete_planner_task",{tarefa_id:$("taskId").value,reauth_token:reauthToken});closeModalById("taskModal");cacheInvalidate(["planner","timeline"]);await loadPlanner({background:true});toast("Tarefa excluída.")}finally{loading(false)}}
 async function loadTimeline(options={}){const cached=cacheGet("timeline");if(cached){state.planner=cached;renderTimeline()}if(!options.background&&!cached)moduleBusy("timelineView",true,"Atualizando linha do tempo...");try{const r=await once(cacheKey("timeline"),()=>api("timeline",currentRequest()));state.planner=r.data||[];cacheSet("timeline",state.planner);renderTimeline();return state.planner}catch(e){if(!cached)throw e;return cached}finally{moduleBusy("timelineView",false)}}
 function renderTimeline(){
@@ -2188,9 +2219,13 @@ async function openUser(id=""){
   }catch(e){toast(e.message||"Não foi possível abrir o cadastro de usuário.");console.error(e)}
 }
 async function saveUser(){
-  const reauthToken=await reauth();
-  if(!reauthToken)return;
-
+  // Correção: saveUserAdmin_ no backend NUNCA exigiu reauth_token (só
+  // excluir/desativar/resetar senha/remover foto exigem). Pedir senha
+  // aqui era desnecessário — e usava window.prompt(), que em PWA
+  // instalado (tela inicial do celular) e em alguns navegadores pode
+  // retornar vazio na hora, sem nem chegar a aparecer visualmente.
+  // Quando isso acontecia, a função saía sem chamar a API e sem
+  // mostrar nenhum erro: parecia que "nada acontecia" ao salvar.
   const btn=$("saveUserButton");
   const modulos=qsa("#userModulesChecks input").map(x=>({modulo_id:x.value,permitido:x.checked}));
   const payload={
