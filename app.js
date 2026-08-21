@@ -1405,7 +1405,7 @@ async function loadTimeline(options={}){
   return next;
 }
 function renderTimeline(){
-  $("timelineList").innerHTML=state.planner.map(t=>{
+  $("timelineList").innerHTML=state.timeline.map(t=>{
     const title=t.requisito_titulo||t.titulo||"Tarefa";
     const church=t.igreja||"Igreja não informada";
     return `<article class="timeline-item timeline-item-r5" style="--timeline-color:${AREAS[t.prioridade]||'#00bddd'}"><div class="timeline-title-r5"><strong>${esc(title)}</strong><span class="timeline-area"><img src="${AREA_ICONS[t.prioridade]||'assets/icone_192.png'}">${esc(t.prioridade||"")}</span><em>(${esc(church)})</em></div><span>${esc(t.responsavel||"Não informado")} · ${esc(t.status||"")} · ${formatDateBR(t.evento_data||t.prazo||t.data_conclusao)}</span></article>`;
