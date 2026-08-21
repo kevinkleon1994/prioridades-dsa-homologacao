@@ -430,7 +430,7 @@ async function refreshCurrentModule(){
 
 
 
-/* v2.2.5 — Performance Enterprise / Navegação Instantânea */
+/* v2.2.7 — Performance Enterprise / Navegação Instantânea */
 const ENTERPRISE_CACHE_V225={stale:60*60*1000,prefix:"prioridades_v225_"};
 function contextSignatureV225(){const r=currentRequest();return [state.user?.usuario_id,r.polo_id,r.distrito_id,r.igreja_id,r.periodo,r.ano,r.mes,r.ano_inicio,r.ano_fim,r.data_inicio,r.data_fim].map(x=>String(x||"")).join("|")}
 function enterpriseKeyV225(name){return ENTERPRISE_CACHE_V225.prefix+name+"::"+contextSignatureV225()}
@@ -444,7 +444,7 @@ function renderCachedModuleV225(name,s){
   if(!s?.data)return false;const d=s.data;
   if(name==="dashboard"){state.dashboard=d;state.context={...state.context,...(d.context||{})};renderDashboard(d);renderContext();return true}
   if(name==="priorities"){state.requirements=d.requirements||[];state.results=d.results||[];renderPriorities();return true}
-  if(name==="planner"){state.tasks=d.tasks||[];renderPlanner();return true}
+  if(name==="planner"){state.planner=d.tasks||[];renderPlanner();return true}
   if(name==="timeline"){state.timeline=d.timeline||[];renderTimeline();return true}
   if(name==="requirements"){state.requirements=d.requirements||[];state.goals=d.goals||[];renderRequirements();return true}
   if(name==="myChurch"){state.churchProfile=d.profile||{};state.departments=d.departments||[];state.churchDepartments=d.churchDepartments||[];renderMyChurch();return true}
@@ -1332,8 +1332,8 @@ async function saveCriterionDraftByKey(key,options={}){
 }
 
 async function loadPlanner(options={}){
-  const before=(state.tasks||[]).slice();const r=await api("list_planner",currentRequest());const next=r.data||[];
-  state.tasks=next;enterpriseWriteV225("planner",{tasks:next});cacheSet("planner",next);
+  const before=(state.planner||[]).slice();const r=await api("list_planner",currentRequest());const next=r.data||[];
+  state.planner=next;enterpriseWriteV225("planner",{tasks:next});cacheSet("planner",next);
   if(viewIsActiveV225("planner")&&(changedV225(before,next)||!options.background))renderPlanner();
   return next;
 }
