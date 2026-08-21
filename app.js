@@ -430,7 +430,7 @@ async function refreshCurrentModule(){
 
 
 
-/* v2.2.7 — Performance Enterprise / Navegação Instantânea */
+/* v2.2.5 — Performance Enterprise / Navegação Instantânea */
 const ENTERPRISE_CACHE_V225={stale:60*60*1000,prefix:"prioridades_v225_"};
 function contextSignatureV225(){const r=currentRequest();return [state.user?.usuario_id,r.polo_id,r.distrito_id,r.igreja_id,r.periodo,r.ano,r.mes,r.ano_inicio,r.ano_fim,r.data_inicio,r.data_fim].map(x=>String(x||"")).join("|")}
 function enterpriseKeyV225(name){return ENTERPRISE_CACHE_V225.prefix+name+"::"+contextSignatureV225()}
@@ -2224,7 +2224,7 @@ async function whatsappSummary(){try{const r=await api("whatsapp_summary",curren
 function exportCSV(){const rows=state.results||[];if(!rows.length)return toast("Nenhum resultado carregado.");const keys=["igreja","data_realizacao","prioridade","titulo","alcancado","plano_acao","responsavel"];const csv=[keys,...rows.map(r=>keys.map(k=>r[k]??""))].map(row=>row.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob(["\ufeff"+csv],{type:"text/csv"}));a.download="prioridades-dsa.csv";a.click();URL.revokeObjectURL(a.href)}
 
 async function loadDeveloper(options={}){
-  const before=(state.users||[]).slice();const r=await api("developer_bootstrap",currentRequest());const next=r.data||[];
+  const before=(state.users||[]).slice();const r=await api("developer_bootstrap",currentRequest());const next=r.usuarios||[];
   state.users=next;enterpriseWriteV225("developer",{users:next});cacheSet("developer",next);
   if(viewIsActiveV225("developer")&&(changedV225(before,next)||!options.background))renderUsers();
   return next;
