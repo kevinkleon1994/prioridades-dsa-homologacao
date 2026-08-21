@@ -4,5 +4,5 @@ window.APP_CONFIG = Object.freeze({
   UNION: "União Norte Brasileira",
   DIVISION: "Divisão Sul-Americana",
   VERSION: "2.2.8",
-  API_VERSION: "2.2.8"
+  API_VERSION: "2.5"
 });
