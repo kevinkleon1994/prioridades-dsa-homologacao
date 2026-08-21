@@ -3,6 +3,6 @@ window.APP_CONFIG = Object.freeze({
   FIELD: "Missão Oeste do Pará",
   UNION: "União Norte Brasileira",
   DIVISION: "Divisão Sul-Americana",
-  VERSION: "2.2.5",
-  API_VERSION: "2.5"
+  VERSION: "2.2.6",
+  API_VERSION: "2.6"
 });
