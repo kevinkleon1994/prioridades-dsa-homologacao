@@ -2270,7 +2270,7 @@ async function openUser(id=""){
   const legacyModules=new Set(String(u.modulos_legado||"").split(",").map(x=>x.trim().toLowerCase()).filter(Boolean));
   const isDeveloper=String(u.perfil||"").toLowerCase()==="desenvolvedor";
   const isPermitted=m=>permittedIds.has(String(m.modulo_id||""))||(!permittedIds.size&&legacyModules.has(String(m.modulo||"").trim().toLowerCase()))||(!permittedIds.size&&!legacyModules.size&&isDeveloper);
-  $("userModulesChecks").innerHTML=modulesBase.map(m=>`<label class="check-v101"><input type="checkbox" value="${m.modulo_id}" ${id?isPermitted(m):"checked"}><span>${esc(m.titulo||m.modulo)}</span></label>`).join("");
+  $("userModulesChecks").innerHTML=modulesBase.map(m=>`<label class="check-v101"><input type="checkbox" value="${m.modulo_id}" ${id?(isPermitted(m)?"checked":""):"checked"}><span>${esc(m.titulo||m.modulo)}</span></label>`).join("");
   $("deleteUserButtonV222")?.classList.toggle("hidden",!id);$("saveUserButton").textContent="Salvar";
   $("userModal").classList.add("open");
   document.body.classList.add("modal-open-v118");
