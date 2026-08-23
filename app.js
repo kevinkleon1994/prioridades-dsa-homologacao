@@ -2130,15 +2130,30 @@ function renderReports(){
 async function deleteReport(id){
   const r=state.reports.find(x=>x.relatorio_id===id);
   if(!r)return;
-  const senha=prompt(`Excluir este relatório?\n\n${standardizedReportTitle(r)}\n\nDigite sua senha para confirmar:`);
-  if(senha===null)return;
-  if(!senha)return toast("Digite sua senha para confirmar a exclusão.");
+  if(!await confirmDeleteReportV222(standardizedReportTitle(r)))return;
+  const reauthToken=await reauth();
+  if(!reauthToken)return;
   try{
-    await api("delete_report",{relatorio_id:id,senha},{noRetry:true});
+    const result=await api("delete_report",{relatorio_id:id,reauth_token:reauthToken},{noRetry:true});
+    if(result?.deleted!==true)throw new Error("A exclusão do relatório não foi confirmada.");
     cacheInvalidate("reports");
     await loadReports({background:true});
-    toast("Relatório excluído ✔️");
-  }catch(e){toast(e.message||"Não foi possível excluir o relatório.")}
+    setSyncState("Conectado","ok");
+    toast("Relatório excluído e registrado no histórico.");
+  }catch(e){setSyncState("Erro de sincronização","error");toast(e.message||"Não foi possível excluir o relatório.")}
+}
+
+function confirmDeleteReportV222(title){
+  const modal=$("deleteReportConfirmModal"),text=$("deleteReportConfirmText"),button=$("confirmDeleteReportButton"),cancel=$("cancelDeleteReportButton");
+  if(!modal||!text||!button||!cancel)return Promise.resolve(false);
+  text.textContent=`Você tem certeza que deseja excluir o relatório "${title}"? Ele sairá do histórico, mas a operação ficará registrada.`;
+  modal.classList.add("open");
+  return new Promise(resolve=>{
+    let settled=false;
+    const close=modal.querySelector('[data-close="deleteReportConfirmModal"]');
+    const finish=value=>{if(settled)return;settled=true;button.onclick=null;cancel.onclick=null;if(close)close.onclick=null;closeModalById("deleteReportConfirmModal");resolve(value)};
+    button.onclick=()=>finish(true);cancel.onclick=()=>finish(false);if(close)close.onclick=()=>finish(false);
+  });
 }
 
 function markdownToHtml(md){let t=esc(md||"");t=t.replace(/^### (.*)$/gm,"<h3>$1</h3>").replace(/^## (.*)$/gm,"<h2>$1</h2>").replace(/^# (.*)$/gm,"<h1>$1</h1>").replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>").replace(/\n/g,"<br>");return t}
