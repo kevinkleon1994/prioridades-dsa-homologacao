@@ -1448,7 +1448,10 @@ function canEditRequirements(){
   return role==="Desenvolvedor"||role==="Administrador";
 }
 
-function canToggleChurchRequirement(){return Boolean(selectedChurchId())}
+function canToggleChurchRequirement(){
+  const role=String(state.user?.perfil||"");
+  return Boolean(selectedChurchId())&&["Desenvolvedor","Administrador","Pastor Distrital"].includes(role);
+}
 async function toggleChurchRequirement(requirementId){
   const churchId=selectedChurchId();
   const requirement=state.requirements.find(r=>String(r.requisito_id)===String(requirementId));
