@@ -2224,7 +2224,8 @@ async function whatsappSummary(){try{const r=await api("whatsapp_summary",curren
 function exportCSV(){const rows=state.results||[];if(!rows.length)return toast("Nenhum resultado carregado.");const keys=["igreja","data_realizacao","prioridade","titulo","alcancado","plano_acao","responsavel"];const csv=[keys,...rows.map(r=>keys.map(k=>r[k]??""))].map(row=>row.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob(["\ufeff"+csv],{type:"text/csv"}));a.download="prioridades-dsa.csv";a.click();URL.revokeObjectURL(a.href)}
 
 async function loadDeveloper(options={}){
-  const before=(state.users||[]).slice();const r=await api("developer_bootstrap",currentRequest());const next=r.usuarios||[];
+  const before=(state.users||[]).slice();const r=await api("developer_bootstrap",currentRequest());const developer=r.data||r;const next=developer.usuarios||[];
+  state.developer=developer;
   state.users=next;enterpriseWriteV225("developer",{users:next});cacheSet("developer",next);
   if(viewIsActiveV225("developer")&&(changedV225(before,next)||!options.background))renderUsers();
   return next;
