@@ -110,6 +110,10 @@
       </section>
 
       <section id="dashboardView" class="view active">
+        <section id="gerDashboardPanel" class="ger-dashboard-panel" aria-label="Resumo GER">
+          <div class="ger-dashboard-head"><div><p class="eyebrow">GER</p><h3>Grupo Especial de Revisão</h3></div><span id="gerDashboardPeriod">Indicadores da igreja selecionada</span></div>
+          <div id="gerDashboardContent" class="ger-dashboard-grid"><div class="empty-v111">Carregando indicadores GER...</div></div>
+        </section>
         <div class="executive-hero">
           <div><p class="eyebrow">VISÃO EXECUTIVA</p><h2>Desempenho das prioridades estratégicas</h2><p><em id="dailyBibleVerse" class="daily-bible-verse">Acompanhamento estratégico do período selecionado.</em></p></div>
           <div class="hero-kpis">
@@ -275,7 +279,7 @@
       <section id="myChurchView" class="view">
         <div class="view-head">
           <div><p class="eyebrow">CADASTRO LOCAL</p><h2>Minha Igreja</h2><p class="section-description">Informações básicas e indicadores estruturais da igreja selecionada.</p></div>
-          <button id="saveChurchProfileButton" class="primary">Salvar informações</button>
+          <div class="church-head-actions"><button id="editGerButton" type="button">Editar GER</button><button id="saveChurchProfileButton" class="primary">Salvar informações</button></div>
         </div>
         <article class="panel church-profile-panel">
           <div class="church-profile-heading">
@@ -343,7 +347,7 @@
 
   <div id="taskModal" class="modal"><div class="modal-card"><button class="close" data-close="taskModal">×</button><h2 id="taskModalTitle">Nova tarefa</h2><input id="taskId" type="hidden"><label><span>Igreja</span><select id="taskChurch"><option value="">Selecione a igreja</option></select></label><label><span>Título</span><input id="taskTitle"></label><label><span>Prioridade</span><select id="taskArea"><option>Identidade</option><option>Liderança</option><option>Novas Gerações</option><option>Discipulado</option></select></label><label><span>Responsável</span><input id="taskOwner"></label><label><span>Prazo</span><input id="taskDue" type="date"></label><label><span>Status</span><select id="taskStatus"><option>Não iniciado</option><option>Em andamento</option><option>Concluído</option></select></label><div class="task-modal-actions"><button id="deleteTask" class="danger-action hidden">Excluir</button><button id="saveTask" class="primary">Salvar tarefa</button></div></div></div>
 
-  <div id="membersModal" class="modal"><div class="modal-card"><button class="close" data-close="membersModal">×</button><p class="eyebrow">CADASTRO DA IGREJA</p><h2>Quantidade manual de membros</h2><p class="modal-help" id="membersChurchName">Selecione uma igreja.</p><div class="members-form members-form-v83"><label><span>Membros frequentes</span><input id="membersFrequentInput" type="number" min="0"></label><label><span>Membros não frequentes</span><input id="membersInfrequentInput" type="number" min="0"></label><label><span>Membros a transferir</span><input id="membersTransferInput" type="number" min="0"></label><label><span>Membros a resgatar</span><input id="membersRescueInput" type="number" min="0"></label><div class="members-total-preview"><span>Total informado</span><strong id="membersTotalPreview">0</strong></div></div><button id="saveMembersButton" class="primary">Salvar cadastro</button></div></div>
+  <div id="membersModal" class="modal"><div class="modal-card"><button class="close" data-close="membersModal">×</button><p class="eyebrow">GER — GRUPO ESPECIAL DE REVISÃO</p><h2>Indicadores da igreja</h2><p class="modal-help" id="membersChurchName">Selecione uma igreja.</p><div class="members-form members-form-v83"><label><span>Membros frequentes</span><input id="membersFrequentInput" type="number" min="0"></label><label><span>Membros não frequentes</span><input id="membersInfrequentInput" type="number" min="0"></label><label><span>Membros a resgatar</span><input id="membersRescueInput" type="number" min="0"></label><label><span>Transferências recebidas</span><input id="membersTransferEntryInput" type="number" min="0"></label><label><span>Transferências saídas</span><input id="membersTransferExitInput" type="number" min="0"></label><div class="members-total-preview"><span>Total de membros</span><strong id="membersTotalPreview">0</strong></div></div><button id="saveMembersButton" class="primary">Salvar GER</button></div></div>
   <div id="emailModal" class="modal"><div class="modal-card"><button class="close" data-close="emailModal">×</button><h2>Enviar relatório</h2><label><span>E-mail</span><input id="reportEmail" type="email"></label><button id="sendEmail" class="primary">Enviar</button></div></div>
 
   <div id="userModal" class="modal">
