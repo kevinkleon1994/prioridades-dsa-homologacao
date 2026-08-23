@@ -1448,6 +1448,10 @@ function canEditRequirements(){
   return role==="Desenvolvedor"||role==="Administrador";
 }
 
+function canEditChurchRequirement(){
+  return Boolean(selectedChurchId());
+}
+
 function canToggleChurchRequirement(){
   const role=String(state.user?.perfil||"");
   return Boolean(selectedChurchId())&&["Desenvolvedor","Administrador","Pastor Distrital"].includes(role);
@@ -1500,6 +1504,7 @@ function renderRequirements(){
   $("requirementsCount").textContent=`${rows.length} requisito${rows.length===1?"":"s"}`;
 
   const editable=canEditRequirements();
+  const churchEditable=canEditChurchRequirement();
   $("newRequirementButton").classList.toggle("hidden-v111",!editable);
 
   $("requirementsGrid").innerHTML=rows.map(r=>{
@@ -1518,9 +1523,10 @@ function renderRequirements(){
         <span>${esc(r.prioridade||"")}</span>
         <span>Meta: ${fmt(goal)}</span>
       </div>
-      ${(editable||canToggleChurchRequirement())?`<div class="requirement-actions-v118">
-        ${editable?`<button class="requirement-edit" data-edit-requirement="${esc(r.requisito_id)}">Editar</button><button class="requirement-edit" data-goal-requirement="${esc(r.requisito_id)}">Meta</button>`:""}
-        ${canToggleChurchRequirement()?`<button class="requirement-edit" data-toggle-requirement="${esc(r.requisito_id)}">${active?"Inativar nesta igreja":"Ativar nesta igreja"}</button>`:""}
+      ${(editable||churchEditable)?`<div class="requirement-actions-v118">
+        ${churchEditable?`<button class="requirement-edit" data-edit-requirement="${esc(r.requisito_id)}">Editar nesta igreja</button>`:""}
+        ${editable&&!churchEditable?`<button class="requirement-edit" data-edit-requirement="${esc(r.requisito_id)}">Editar cadastro geral</button>`:""}
+        ${editable?`<button class="requirement-edit" data-goal-requirement="${esc(r.requisito_id)}">Meta</button>`:""}
       </div>`:""}
     </article>`;
   }).join("")||'<div class="empty-v111">Nenhum requisito encontrado.</div>';
@@ -1532,14 +1538,24 @@ function renderRequirements(){
   qsa("[data-goal-requirement]").forEach(b=>{
     b.onclick=()=>openGoal(b.dataset.goalRequirement);
   });
-  qsa("[data-toggle-requirement]").forEach(b=>{b.onclick=()=>toggleChurchRequirement(b.dataset.toggleRequirement)});
 }
 
 function openRequirement(id=""){
-  const r=state.requirements.find(x=>x.requisito_id===id)||{};$("requirementModalTitle").textContent=id?"Editar requisito":"Novo requisito";$("requirementOriginalCode").value=id;$("requirementCodeInput").value=r.codigo||"";$("requirementAreaInput").value=r.prioridade||"Identidade";$("requirementTitleInput").value=r.titulo||"";$("requirementDescriptionInput").value=r.direcionamento||"";$("requirementQuestionInput").value=r.pergunta||"";$("requirementGoalInput").value=r.meta_padrao??0;$("requirementActiveInput").value=String(r.ativo!==false);$("requirementModal").classList.add("open")
+  const r=state.requirements.find(x=>x.requisito_id===id)||{};
+  const churchMode=Boolean(id&&selectedChurchId());
+  $("requirementModalTitle").textContent=churchMode?"Editar requisito nesta igreja":(id?"Editar cadastro geral":"Novo requisito");
+  $("requirementOriginalCode").value=id;$("requirementCodeInput").value=r.codigo||"";$("requirementAreaInput").value=r.prioridade||"Identidade";$("requirementTitleInput").value=r.titulo||"";$("requirementDescriptionInput").value=r.direcionamento||"";$("requirementQuestionInput").value=r.pergunta||"";$("requirementGoalInput").value=r.meta_padrao??0;$("requirementActiveInput").value=String(churchMode?r.ativo_na_igreja!==false:r.ativo!==false);$("requirementModal").classList.add("open")
 }
 async function saveRequirement(){
-  loading(true,"Salvando requisito...");try{await api("save_requirement",{requisito_id:$("requirementOriginalCode").value,codigo:$("requirementCodeInput").value,prioridade:$("requirementAreaInput").value,titulo:$("requirementTitleInput").value,direcionamento:$("requirementDescriptionInput").value,pergunta:$("requirementQuestionInput").value,meta_padrao:num($("requirementGoalInput").value),ativo:$("requirementActiveInput").value==="true"});$("requirementModal").classList.remove("open");cacheInvalidate(["requirements","priorities","dashboard"]);await loadRequirements({background:true});toast("Requisito salvo.")}finally{loading(false)}
+  const requirementId=$("requirementOriginalCode").value,churchId=selectedChurchId();
+  const payload={requisito_id:requirementId,codigo:$("requirementCodeInput").value,prioridade:$("requirementAreaInput").value,titulo:$("requirementTitleInput").value,direcionamento:$("requirementDescriptionInput").value,pergunta:$("requirementQuestionInput").value,meta_padrao:num($("requirementGoalInput").value),ativo:$("requirementActiveInput").value==="true"};
+  loading(true,"Salvando requisito...");try{
+    if(churchId&&requirementId){
+      const reauthToken=await reauth();if(!reauthToken)return;
+      await api("save_church_requirement_config",Object.assign(payload,{igreja_id:churchId,reauth_token:reauthToken}),{noRetry:true});
+    }else await api("save_requirement",payload);
+    $("requirementModal").classList.remove("open");cacheInvalidate(["requirements","priorities","dashboard"]);await loadRequirements({background:true});toast(churchId?"Requisito da igreja salvo.":"Requisito salvo.");
+  }finally{loading(false)}
 }
 function openGoal(id){
   const r=state.requirements.find(x=>x.requisito_id===id)||{};$("goalRequirementId").value=id;$("goalModalTitle").textContent=selectedChurchId()?`Meta específica — ${r.titulo}`:`Meta global — ${r.titulo}`;$("goalYearInput").value=String(new Date().getFullYear());$("goalValueInput").value=r.meta_padrao??0;$("resetGoalButton").classList.toggle("hidden",!selectedChurchId());$("goalModal").classList.add("open")
