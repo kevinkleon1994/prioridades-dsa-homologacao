@@ -302,7 +302,12 @@
           <button id="newUserButton" class="primary">+ Novo usuário</button>
         </div>
 
-        <article class="panel admin-users-panel">
+        <div class="report-history-actions-v111" style="margin:0 0 16px">
+          <button id="adminUsersTab" class="primary">Usuários e permissões</button>
+          <button id="systemHealthTab">Saúde do sistema</button>
+        </div>
+
+        <article id="adminUsersPanel" class="panel admin-users-panel">
           <div class="admin-toolbar">
             <input id="userSearch" type="search" placeholder="Pesquisar usuário..." autocomplete="off">
             <span id="usersCount">0 usuários</span>
@@ -324,6 +329,11 @@
               <tbody id="usersTableBody"></tbody>
             </table>
           </div>
+        </article>
+
+        <article id="systemHealthPanel" class="panel hidden-v111">
+          <div class="view-head"><div><p class="eyebrow">MONITORAMENTO</p><h2>Saúde do sistema</h2><p class="modal-help">Diagnóstico da conexão e das últimas atividades.</p></div><button id="refreshSystemHealthButton" class="primary">Atualizar</button></div>
+          <div id="systemHealthContent" class="dashboard-grid"><div class="empty-v111">Clique em Atualizar para verificar a saúde do sistema.</div></div>
         </article>
       </section>
 
