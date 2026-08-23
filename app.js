@@ -1410,7 +1410,18 @@ async function reauth(){
     setTimeout(()=>input.focus(),0);
   });
 }
-async function deleteTask(){const reauthToken=await reauth();if(!reauthToken)return;loading(true,"Excluindo tarefa...");try{await api("delete_planner_task",{tarefa_id:$("taskId").value,reauth_token:reauthToken});closeModalById("taskModal");cacheInvalidate(["planner","timeline"]);await loadPlanner({background:true});toast("Tarefa excluída.")}finally{loading(false)}}
+async function deleteTask(){
+  const reauthToken=await reauth();if(!reauthToken)return;
+  loading(true,"Excluindo tarefa...");
+  try{
+    const result=await api("delete_planner_task",{tarefa_id:$("taskId").value,reauth_token:reauthToken});
+    if(result?.deleted!==true)throw new Error("A exclusão da tarefa não foi confirmada.");
+    closeModalById("taskModal");cacheInvalidate(["planner","timeline"]);await loadPlanner({background:true});
+    setSyncState("Conectado","ok");toast("Tarefa excluída e registrada no histórico.");
+  }catch(e){
+    setSyncState("Erro de sincronização","error");toast(e.message||"Não foi possível excluir a tarefa.");console.error(e);
+  }finally{loading(false)}
+}
 async function loadTimeline(options={}){
   const before=(state.timeline||[]).slice();const r=await api("list_timeline",currentRequest());const next=r.data||[];
   state.timeline=next;enterpriseWriteV225("timeline",{timeline:next});cacheSet("timeline",next);
