@@ -2261,9 +2261,9 @@ function fillUserTerritoryOptions(selected={}){
   const districtId=String(selected.distrito_id??district.value??"");
   const churchId=String(selected.igreja_id??church.value??"");
   const districts=(state.scope.distritos||[]).filter(x=>!poleId||String(x.polo_id||"")===poleId);
+  // A igreja pertence ao Polo por meio do Distrito; algumas linhas não têm polo_id próprio.
   const churches=(state.scope.igrejas||[]).filter(x=>
-    (!poleId||String(x.polo_id||"")===poleId) &&
-    (!districtId||String(x.distrito_id||"")===districtId)
+    !districtId || String(x.distrito_id||"")===districtId
   );
   pole.innerHTML='<option value="">— Selecione o polo —</option>'+(state.scope.polos||[]).map(x=>`<option value="${x.polo_id}">${esc(x.polo)}</option>`).join("");
   district.innerHTML='<option value="">— Selecione o distrito —</option>'+districts.map(x=>`<option value="${x.distrito_id}">${esc(x.distrito)}</option>`).join("");
