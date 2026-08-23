@@ -1396,7 +1396,20 @@ async function saveTask(){
     toast(e.message||"Não foi possível salvar a tarefa.");
   }
 }
-async function reauth(){const senha=prompt("Confirme sua senha para continuar:");if(!senha)return "";try{const r=await api("reauth",{senha});return String(r.reauth_token||"")}catch(e){toast(e.message);return ""}}
+async function reauth(){
+  const modal=$("passwordConfirmModal"),input=$("activePasswordInput"),button=$("confirmPasswordButton");
+  if(!modal||!input||!button)return "";
+  input.value="";modal.classList.add("open");document.body.classList.add("modal-open-v118");
+  return new Promise(resolve=>{
+    let settled=false;
+    const finish=token=>{if(settled)return;settled=true;button.onclick=null;input.onkeydown=null;close.onclick=null;closeModalById("passwordConfirmModal");resolve(token||"")};
+    const close=modal.querySelector('[data-close="passwordConfirmModal"]');
+    const confirm=async()=>{const senha=input.value;if(!senha){input.focus();return}button.disabled=true;try{const r=await api("reauth",{senha});finish(String(r.reauth_token||""))}catch(e){toast(e.message)}finally{button.disabled=false}};
+    button.onclick=confirm;input.onkeydown=e=>{if(e.key==="Enter"){e.preventDefault();confirm()}};
+    if(close)close.onclick=()=>finish("");
+    setTimeout(()=>input.focus(),0);
+  });
+}
 async function deleteTask(){const reauthToken=await reauth();if(!reauthToken)return;loading(true,"Excluindo tarefa...");try{await api("delete_planner_task",{tarefa_id:$("taskId").value,reauth_token:reauthToken});closeModalById("taskModal");cacheInvalidate(["planner","timeline"]);await loadPlanner({background:true});toast("Tarefa excluída.")}finally{loading(false)}}
 async function loadTimeline(options={}){
   const before=(state.timeline||[]).slice();const r=await api("list_timeline",currentRequest());const next=r.data||[];
