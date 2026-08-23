@@ -1253,6 +1253,7 @@ function renderCriterion(){
   $("goalInputV51").disabled=true;
   if(disabled)$("saveCriterionV51").textContent="Selecione uma igreja para editar";
   else criterionButtonState();
+  updateLive();
 }
 function updateLive(){
   const g=Math.max(0,num($("goalInputV51").value));
@@ -1266,6 +1267,18 @@ function updateLive(){
   const p=pct(r,g);
   $("livePercentV51").textContent=Math.round(p)+"%";
   $("liveProgressV51").style.width=Math.min(100,p)+"%";
+  const disabled=!!$("reachedInputV51").disabled;
+  const atStart=r<=0,atGoal=r>=g;
+  if($("decreaseReachedV2229"))$("decreaseReachedV2229").disabled=disabled||atStart;
+  if($("increaseReachedV2229"))$("increaseReachedV2229").disabled=disabled||atGoal;
+}
+function changeReachedV2229(delta){
+  const input=$("reachedInputV51");if(!input||input.disabled)return;
+  const goal=Math.max(0,num($("goalInputV51")?.value));
+  const next=Math.min(goal,Math.max(0,num(input.value)+Number(delta||0)));
+  if(next===num(input.value))return;
+  input.value=String(next);
+  input.dispatchEvent(new Event("input",{bubbles:true}));
 }
 function recordDateForCurrentPeriod(){
   const today=localTodayIso();
@@ -2626,6 +2639,9 @@ function bind(){
 
   bindChange("criteriaStatusFilter",renderPriorities);
   ["goalInputV51","reachedInputV51"].forEach(id=>bindInput(id,updateLive));
+  bindClick("decreaseReachedV2229",()=>changeReachedV2229(-1));
+  bindClick("increaseReachedV2229",()=>changeReachedV2229(1));
+  $("reachedInputV51")?.addEventListener("wheel",e=>e.preventDefault(),{passive:false});
   ["actionPlanV51","reachedInputV51","responsibleInputV51","dateInputV51","dateEndInputV222","voteInputV51","materialInputV51"]
     .forEach(id=>{
       bindInput(id,()=>{if(id==="reachedInputV51")updateLive();rememberCriterionDraft()});
