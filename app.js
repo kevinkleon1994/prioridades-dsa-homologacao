@@ -2349,13 +2349,14 @@ async function deleteUserV222(){
   if(btn){btn.disabled=true;btn.textContent="Excluindo..."}
 
   try{
-    await api("delete_user_admin",{usuario_id:id,reauth_token:reauthToken},{noRetry:true});
+    const result=await api("delete_user_admin",{usuario_id:id,reauth_token:reauthToken},{noRetry:true});
+    if(result?.deleted!==true)throw new Error("A exclusão do usuário não foi confirmada.");
     closeModalById("userModal");
     cacheInvalidate("developer");
     await loadDeveloper({background:true});
-    toast("Usuário excluído ✔️");
+    setSyncState("Conectado","ok");toast("Usuário excluído e registrado no histórico.");
   }catch(e){
-    toast(e.message||"Não foi possível excluir o usuário.");
+    setSyncState("Erro de sincronização","error");toast(e.message||"Não foi possível excluir o usuário.");console.error(e);
   }finally{
     if(btn){btn.disabled=false;btn.textContent="Excluir usuário"}
   }
