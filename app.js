@@ -2255,11 +2255,26 @@ async function loadDeveloper(options={}){
   return next;
 }
 function renderUsers(){const q=($("userSearch").value||"").toLowerCase(),rows=state.users.filter(u=>`${u.nome} ${u.login} ${u.perfil}`.toLowerCase().includes(q));$("usersCount").textContent=`${rows.length} usuário${rows.length===1?"":"s"}`;$("usersTableBody").innerHTML=rows.map(u=>`<tr><td><strong>${esc(u.nome)}</strong></td><td>${esc(u.perfil)}</td><td>${esc(u.polo_id||"")} / ${esc(u.distrito_id||"")} / ${esc(u.igreja_id||"")}</td><td>${esc(u.login)}</td><td>••••••</td><td><span class="access-pill ${u.ativo?"active":"inactive"}"><i></i>${u.ativo?"Ativo":"Inativo"}</span></td><td><div class="user-actions"><button class="user-action edit" data-user="${u.usuario_id}">Editar</button><button class="user-action toggle" data-toggle="${u.usuario_id}">${u.ativo?"Inativar":"Ativar"}</button></div></td></tr>`).join("");qsa("[data-user]").forEach(b=>b.onclick=()=>openUser(b.dataset.user));qsa("[data-toggle]").forEach(b=>b.onclick=()=>toggleUser(b.dataset.toggle))}
-function populateUserTerritory(u={}){
-  $("userPoleInput").innerHTML='<option value="">—</option>'+state.scope.polos.map(x=>`<option value="${x.polo_id}">${esc(x.polo)}</option>`).join("");
-  $("userDistrictInput").innerHTML='<option value="">—</option>'+state.scope.distritos.map(x=>`<option value="${x.distrito_id}">${esc(x.distrito)}</option>`).join("");
-  $("userChurchInput").innerHTML='<option value="">—</option>'+state.scope.igrejas.map(x=>`<option value="${x.igreja_id}">${esc(x.igreja)}</option>`).join("");
-  $("userPoleInput").value=u.polo_id||"";$("userDistrictInput").value=u.distrito_id||"";$("userChurchInput").value=u.igreja_id||"";
+function fillUserTerritoryOptions(selected={}){
+  const pole=$("userPoleInput"),district=$("userDistrictInput"),church=$("userChurchInput");
+  const poleId=String(selected.polo_id??pole.value??"");
+  const districtId=String(selected.distrito_id??district.value??"");
+  const churchId=String(selected.igreja_id??church.value??"");
+  const districts=(state.scope.distritos||[]).filter(x=>!poleId||String(x.polo_id||"")===poleId);
+  const churches=(state.scope.igrejas||[]).filter(x=>
+    (!poleId||String(x.polo_id||"")===poleId) &&
+    (!districtId||String(x.distrito_id||"")===districtId)
+  );
+  pole.innerHTML='<option value="">— Selecione o polo —</option>'+(state.scope.polos||[]).map(x=>`<option value="${x.polo_id}">${esc(x.polo)}</option>`).join("");
+  district.innerHTML='<option value="">— Selecione o distrito —</option>'+districts.map(x=>`<option value="${x.distrito_id}">${esc(x.distrito)}</option>`).join("");
+  church.innerHTML='<option value="">— Selecione a igreja —</option>'+churches.map(x=>`<option value="${x.igreja_id}">${esc(x.igreja)}</option>`).join("");
+  pole.value=poleId;district.value=districts.some(x=>String(x.distrito_id)===districtId)?districtId:"";
+  church.value=churches.some(x=>String(x.igreja_id)===churchId)?churchId:"";
+}
+function populateUserTerritory(u={}){fillUserTerritoryOptions(u)}
+function bindUserTerritoryFilters(){
+  $("userPoleInput").onchange=()=>fillUserTerritoryOptions({polo_id:$("userPoleInput").value});
+  $("userDistrictInput").onchange=()=>fillUserTerritoryOptions({polo_id:$("userPoleInput").value,distrito_id:$("userDistrictInput").value});
 }
 async function openUser(id=""){
   try{
@@ -2524,6 +2539,7 @@ function bind(){
   bindClick("saveUserButton",saveUser);
   bindClick("deleteUserButtonV222",deleteUserV222);
   bindInput("userSearch",renderUsers);
+  bindUserTerritoryFilters();
 
   bindChange("rankingLevel",()=>{
     cacheInvalidate("dashboard");
