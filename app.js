@@ -1404,7 +1404,7 @@ async function reauth(){
     let settled=false;
     const finish=token=>{if(settled)return;settled=true;button.onclick=null;input.onkeydown=null;close.onclick=null;closeModalById("passwordConfirmModal");resolve(token||"")};
     const close=modal.querySelector('[data-close="passwordConfirmModal"]');
-    const confirm=async()=>{const senha=input.value;if(!senha){input.focus();return}button.disabled=true;try{const r=await api("reauth",{senha});finish(String(r.reauth_token||""))}catch(e){toast(e.message)}finally{button.disabled=false}};
+    const confirm=async()=>{const senha=input.value;if(!senha){input.focus();return}button.disabled=true;try{const r=await api("reauth",{senha});finish(String(r.reauth_token||r.data?.reauth_token||""))}catch(e){toast(e.message)}finally{input.value="";button.disabled=false}};
     button.onclick=confirm;input.onkeydown=e=>{if(e.key==="Enter"){e.preventDefault();confirm()}};
     if(close)close.onclick=()=>finish("");
     setTimeout(()=>input.focus(),0);
@@ -2538,6 +2538,8 @@ async function init(){
   setupPeriod();
   bind();
   setupPWA();
+  if($("userSearch"))$("userSearch").value="";
+  if($("activePasswordInput"))$("activePasswordInput").value="";
 
   if(localStorage.getItem("prioridades_cache_schema")!=="10"){
     [
