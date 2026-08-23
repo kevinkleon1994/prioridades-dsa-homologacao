@@ -304,7 +304,7 @@
 
         <article class="panel admin-users-panel">
           <div class="admin-toolbar">
-            <input id="userSearch" type="search" placeholder="Pesquisar usuário...">
+            <input id="userSearch" type="search" placeholder="Pesquisar usuário..." autocomplete="off">
             <span id="usersCount">0 usuários</span>
           </div>
 
@@ -458,7 +458,7 @@
       <p class="eyebrow">CONFIRMAÇÃO DE SEGURANÇA</p>
       <h2>Confirme sua senha</h2>
       <p class="modal-help">Esta ação exige a senha do usuário atualmente conectado.</p>
-      <label><span>Senha</span><input id="activePasswordInput" type="password" autocomplete="current-password"></label>
+      <label><span>Senha</span><input id="activePasswordInput" type="password" autocomplete="new-password"></label>
       <div class="user-modal-actions"><button id="confirmPasswordButton" class="primary">Confirmar</button></div>
     </div>
   </div>
@@ -501,7 +501,7 @@
   <div id="toast" class="toast"></div>
 
   <script src="./config.js"></script>
-  <script src="./app.js?v=2.2.11"></script>
+  <script src="./app.js?v=2.2.12"></script>
 
 
 </body>
