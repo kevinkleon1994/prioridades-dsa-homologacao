@@ -1524,9 +1524,8 @@ function renderRequirements(){
         <span>Meta: ${fmt(goal)}</span>
       </div>
       ${(editable||churchEditable)?`<div class="requirement-actions-v118">
-        ${churchEditable?`<button class="requirement-edit" data-edit-requirement="${esc(r.requisito_id)}">Editar nesta igreja</button>`:""}
-        ${editable&&!churchEditable?`<button class="requirement-edit" data-edit-requirement="${esc(r.requisito_id)}">Editar cadastro geral</button>`:""}
-        ${editable?`<button class="requirement-edit" data-goal-requirement="${esc(r.requisito_id)}">Meta</button>`:""}
+        ${churchEditable?`<button class="requirement-edit" data-edit-requirement="${esc(r.requisito_id)}">✎ Editar</button>`:""}
+        ${editable&&!churchEditable?`<button class="requirement-edit" data-edit-requirement="${esc(r.requisito_id)}">✎ Editar</button>`:""}
       </div>`:""}
     </article>`;
   }).join("")||'<div class="empty-v111">Nenhum requisito encontrado.</div>';
@@ -1549,9 +1548,13 @@ function openRequirement(id=""){
 async function saveRequirement(){
   const requirementId=$("requirementOriginalCode").value,churchId=selectedChurchId();
   const payload={requisito_id:requirementId,codigo:$("requirementCodeInput").value,prioridade:$("requirementAreaInput").value,titulo:$("requirementTitleInput").value,direcionamento:$("requirementDescriptionInput").value,pergunta:$("requirementQuestionInput").value,meta_padrao:num($("requirementGoalInput").value),ativo:$("requirementActiveInput").value==="true"};
-  loading(true,"Salvando requisito...");try{
+  try{
+    let reauthToken="";
     if(churchId&&requirementId){
-      const reauthToken=await reauth();if(!reauthToken)return;
+      reauthToken=await reauth();if(!reauthToken)return;
+    }
+    loading(true,"Salvando requisito...");
+    if(churchId&&requirementId){
       await api("save_church_requirement_config",Object.assign(payload,{igreja_id:churchId,reauth_token:reauthToken}),{noRetry:true});
     }else await api("save_requirement",payload);
     $("requirementModal").classList.remove("open");cacheInvalidate(["requirements","priorities","dashboard"]);await loadRequirements({background:true});toast(churchId?"Requisito da igreja salvo.":"Requisito salvo.");
