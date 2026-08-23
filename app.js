@@ -2340,7 +2340,7 @@ async function deleteUserV222(){
   if(!id)return toast("Nenhum usuário selecionado.");
 
   const target=state.users.find(x=>String(x.usuario_id)===String(id));
-  if(!confirm(`Excluir definitivamente o usuário "${target?.nome||id}"?`))return;
+  if(!await confirmDeleteUserV222(target?.nome||id))return;
 
   const reauthToken=await reauth();
   if(!reauthToken)return;
@@ -2362,6 +2362,19 @@ async function deleteUserV222(){
   }
 }
 
+function confirmDeleteUserV222(name){
+  const modal=$("deleteUserConfirmModal"),text=$("deleteUserConfirmText"),button=$("confirmDeleteUserButton"),cancel=$("cancelDeleteUserButton");
+  if(!modal||!text||!button||!cancel)return Promise.resolve(false);
+  text.textContent=`Você tem certeza que deseja excluir definitivamente o usuário "${name}"? Esta ação não pode ser desfeita.`;
+  modal.classList.add("open");
+  return new Promise(resolve=>{
+    let settled=false;
+    const close=modal.querySelector('[data-close="deleteUserConfirmModal"]');
+    const finish=value=>{if(settled)return;settled=true;button.onclick=null;cancel.onclick=null;if(close)close.onclick=null;closeModalById("deleteUserConfirmModal");resolve(value)};
+    button.onclick=()=>finish(true);cancel.onclick=()=>finish(false);if(close)close.onclick=()=>finish(false);
+  });
+}
+
 function fileBase64(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result));r.onerror=rej;r.readAsDataURL(file)})}
 async function toggleUser(id){
   const reauthToken=await reauth();
@@ -2371,13 +2384,15 @@ async function toggleUser(id){
 
   setSyncState("Atualizando acesso","sync");
   try{
-    await api(u.ativo?"deactivate_user_admin":"reactivate_user_admin",{
+    const result=await api(u.ativo?"deactivate_user_admin":"reactivate_user_admin",{
       usuario_id:id,
       reauth_token:reauthToken
     });
+    if(u.ativo&&result?.inactive!==true)throw new Error("A inativação do usuário não foi confirmada.");
+    if(!u.ativo&&result?.active!==true)throw new Error("A reativação do usuário não foi confirmada.");
     cacheInvalidate("developer");
     await loadDeveloper({background:true});
-    toast("Acesso atualizado.");
+    toast(u.ativo?"Usuário inativado e registrado no histórico.":"Usuário reativado e registrado no histórico.");
     setSyncState("Conectado","ok");
   }catch(e){
     setSyncState("Erro de sincronização","error");
