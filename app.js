@@ -1111,7 +1111,7 @@ async function showView(name,options={}){
       else if(name==="reports")await loadReports({background:true});
       else if(name==="requirements")await loadRequirements({background:true});
       else if(name==="myChurch")await loadMyChurch({background:true});
-      else if(name==="developer")await loadDeveloper({background:true});
+      else if(name==="admin")await loadDeveloper({background:true});
       setSyncState("Conectado","ok");
     }catch(e){
       setSyncState("Erro de sincronização","error");
@@ -2227,7 +2227,7 @@ async function loadDeveloper(options={}){
   const before=(state.users||[]).slice();const r=await api("developer_bootstrap",currentRequest());const developer=r.data||r;const next=developer.usuarios||[];
   state.developer=developer;
   state.users=next;enterpriseWriteV225("developer",{users:next});cacheSet("developer",next);
-  if(viewIsActiveV225("developer")&&(changedV225(before,next)||!options.background))renderUsers();
+  if(viewIsActiveV225("admin")&&(changedV225(before,next)||!options.background))renderUsers();
   return next;
 }
 function renderUsers(){const q=($("userSearch").value||"").toLowerCase(),rows=state.users.filter(u=>`${u.nome} ${u.login} ${u.perfil}`.toLowerCase().includes(q));$("usersCount").textContent=`${rows.length} usuário${rows.length===1?"":"s"}`;$("usersTableBody").innerHTML=rows.map(u=>`<tr><td><strong>${esc(u.nome)}</strong></td><td>${esc(u.perfil)}</td><td>${esc(u.polo_id||"")} / ${esc(u.distrito_id||"")} / ${esc(u.igreja_id||"")}</td><td>${esc(u.login)}</td><td>••••••</td><td><span class="access-pill ${u.ativo?"active":"inactive"}"><i></i>${u.ativo?"Ativo":"Inativo"}</span></td><td><div class="user-actions"><button class="user-action edit" data-user="${u.usuario_id}">Editar</button><button class="user-action toggle" data-toggle="${u.usuario_id}">${u.ativo?"Inativar":"Ativar"}</button></div></td></tr>`).join("");qsa("[data-user]").forEach(b=>b.onclick=()=>openUser(b.dataset.user));qsa("[data-toggle]").forEach(b=>b.onclick=()=>toggleUser(b.dataset.toggle))}
