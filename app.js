@@ -123,7 +123,7 @@ function criterionButtonState(){
 }
 
 function updatePriorityVisualsOnly(){
-  const rows=state.requirements.filter(r=>r.prioridade===state.currentPriority);
+  const rows=state.requirements.filter(r=>r.prioridade===state.currentPriority&&r.ativo_na_igreja!==false);
   const totals=rows.reduce((a,r)=>{
     const g=effectiveGoal(r),v=reachedFor(r.requisito_id);
     a.g+=g;a.v+=v;return a;
@@ -1195,7 +1195,7 @@ function renderPriorities(){
   $("priorityAreaTitle").textContent=state.currentPriority;$("priorityAreaDescription").textContent=desc[state.currentPriority];$("priorityShapeV7").src=AREA_ICONS[state.currentPriority];$("priorityWatermarkV8").src=AREA_ICONS[state.currentPriority];
   $("priorityTabs").innerHTML=Object.entries(AREAS).map(([a,c])=>`<button class="priority-tab-v7 ${a===state.currentPriority?"active":""}" data-area="${a}" style="--tab:${c}"><span class="priority-tab-copy-v7"><img class="priority-tab-icon-v8" src="${AREA_ICONS[a]}">${a}</span><small>${state.requirements.filter(r=>r.prioridade===a).length} critérios</small></button>`).join("");
   qsa(".priority-tab-v7").forEach(b=>b.onclick=()=>{state.currentPriority=b.dataset.area;state.selectedRequirementId="";renderPriorities()});
-  const rows=state.requirements.filter(r=>r.prioridade===state.currentPriority);const totals=rows.reduce((a,r)=>{const g=effectiveGoal(r),v=reachedFor(r.requisito_id);a.g+=g;a.v+=v;return a},{g:0,v:0}),pp=pct(totals.v,totals.g);
+  const rows=state.requirements.filter(r=>r.prioridade===state.currentPriority&&r.ativo_na_igreja!==false);const totals=rows.reduce((a,r)=>{const g=effectiveGoal(r),v=reachedFor(r.requisito_id);a.g+=g;a.v+=v;return a},{g:0,v:0}),pp=pct(totals.v,totals.g);
   $("priorityPercentV7").textContent=Math.round(pp)+"%";$("priorityProgressV7").style.width=pp+"%";$("priorityGoalV7").textContent=fmt(totals.g);$("priorityReachedV7").textContent=fmt(totals.v);$("priorityCountV7").textContent=rows.length;
   const status=$("criteriaStatusFilter").value;
   const visible=rows.filter(r=>{const p=pct(reachedFor(r.requisito_id),effectiveGoal(r));const s=p>=100?"Concluído":p>=60?"Em andamento":"Atenção";return status==="Todos"||s===status});
@@ -1448,6 +1448,26 @@ function canEditRequirements(){
   return role==="Desenvolvedor"||role==="Administrador";
 }
 
+function canToggleChurchRequirement(){return Boolean(selectedChurchId())}
+async function toggleChurchRequirement(requirementId){
+  const churchId=selectedChurchId();
+  const requirement=state.requirements.find(r=>String(r.requisito_id)===String(requirementId));
+  if(!churchId||!requirement)return toast("Selecione uma igreja antes de alterar o requisito.");
+  const next=requirement.ativo_na_igreja===false;
+  const church=(state.scope?.igrejas||[]).find(x=>String(x.igreja_id)===String(churchId));
+  const label=next?"ativar":"inativar";
+  if(!confirm(`Deseja ${label} este requisito somente para a igreja ${church?.igreja||churchId}?`))return;
+  const reauthToken=await reauth();if(!reauthToken)return;
+  setSyncState("Atualizando requisito","sync");
+  try{
+    const r=await api("set_church_requirement_active",{igreja_id:churchId,requisito_id:requirementId,ativo:next,reauth_token:reauthToken},{noRetry:true});
+    if(r?.ativo!==next)throw new Error("A alteração do requisito não foi confirmada.");
+    cacheInvalidate(["requirements","priorities","dashboard"]);
+    await Promise.all([loadRequirements({background:true}),loadPriorities({background:true})]);
+    setSyncState("Conectado","ok");toast(next?"Requisito ativado para esta igreja.":"Requisito inativado para esta igreja.");
+  }catch(e){setSyncState("Erro de sincronização","error");toast(e.message||"Não foi possível alterar o requisito.")}
+}
+
 function effectiveRequirementGoal(requirementId){
   const view=state.requirementGoalView||{};
   const year=Number($("yearFilter")?.value||new Date().getFullYear());
@@ -1482,7 +1502,7 @@ function renderRequirements(){
   $("requirementsGrid").innerHTML=rows.map(r=>{
     const color=AREAS[r.prioridade]||"#102333";
     const goal=effectiveRequirementGoal(r.requisito_id);
-    const active=r.ativo!==false;
+    const active=r.ativo!==false&&r.ativo_na_igreja!==false;
 
     return `<article class="requirement-card" style="--current:${color}">
       <div class="requirement-top">
@@ -1495,9 +1515,9 @@ function renderRequirements(){
         <span>${esc(r.prioridade||"")}</span>
         <span>Meta: ${fmt(goal)}</span>
       </div>
-      ${editable?`<div class="requirement-actions-v118">
-        <button class="requirement-edit" data-edit-requirement="${esc(r.requisito_id)}">Editar</button>
-        <button class="requirement-edit" data-goal-requirement="${esc(r.requisito_id)}">Meta</button>
+      ${(editable||canToggleChurchRequirement())?`<div class="requirement-actions-v118">
+        ${editable?`<button class="requirement-edit" data-edit-requirement="${esc(r.requisito_id)}">Editar</button><button class="requirement-edit" data-goal-requirement="${esc(r.requisito_id)}">Meta</button>`:""}
+        ${canToggleChurchRequirement()?`<button class="requirement-edit" data-toggle-requirement="${esc(r.requisito_id)}">${active?"Inativar nesta igreja":"Ativar nesta igreja"}</button>`:""}
       </div>`:""}
     </article>`;
   }).join("")||'<div class="empty-v111">Nenhum requisito encontrado.</div>';
@@ -1509,6 +1529,7 @@ function renderRequirements(){
   qsa("[data-goal-requirement]").forEach(b=>{
     b.onclick=()=>openGoal(b.dataset.goalRequirement);
   });
+  qsa("[data-toggle-requirement]").forEach(b=>{b.onclick=()=>toggleChurchRequirement(b.dataset.toggleRequirement)});
 }
 
 function openRequirement(id=""){
