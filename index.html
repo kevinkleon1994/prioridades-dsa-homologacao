@@ -463,6 +463,19 @@
     </div>
   </div>
 
+  <div id="deleteUserConfirmModal" class="modal">
+    <div class="modal-card">
+      <button class="close" data-close="deleteUserConfirmModal">×</button>
+      <p class="eyebrow">CONFIRMAÇÃO DE EXCLUSÃO</p>
+      <h2>Excluir usuário?</h2>
+      <p id="deleteUserConfirmText" class="modal-help"></p>
+      <div class="user-modal-actions">
+        <button id="cancelDeleteUserButton" type="button">Cancelar</button>
+        <button id="confirmDeleteUserButton" class="danger-action" type="button">Continuar</button>
+      </div>
+    </div>
+  </div>
+
   <div id="fofaStartModal" class="modal">
     <div class="modal-card">
       <button class="close" data-close="fofaStartModal">×</button>
@@ -501,7 +514,7 @@
   <div id="toast" class="toast"></div>
 
   <script src="./config.js"></script>
-  <script src="./app.js?v=2.2.12"></script>
+  <script src="./app.js?v=2.2.13"></script>
 
 
 </body>
