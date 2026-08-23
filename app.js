@@ -15,7 +15,7 @@ let state={
   context:{polo_id:"",distrito_id:"",igreja_id:"",data_inicio:"",data_fim:""},
   dashboard:null,requirements:[],results:[],planner:[],reports:[],difficulties:[],
   fofaItems:[],fofaEvaluations:[],fofaHistory:[],fofaCurrent:null,fofaAxis:"Identidade",fofaSmart:null,fofaCatalog:{},fofaCompletion:null,
-  churchProfile:null,departments:[],churchFormDirty:false,users:[],developer:null,systemHealth:null,
+  churchProfile:null,churchGer:null,departments:[],churchFormDirty:false,users:[],developer:null,systemHealth:null,
   currentPriority:"Identidade",selectedRequirementId:"",currentAiReport:"",currentReport:null,editingReportId:""
 };
 
@@ -447,7 +447,7 @@ function renderCachedModuleV225(name,s){
   if(name==="planner"){state.planner=d.tasks||[];renderPlanner();return true}
   if(name==="timeline"){state.timeline=d.timeline||[];renderTimeline();return true}
   if(name==="requirements"){state.requirements=d.requirements||[];state.goals=d.goals||[];renderRequirements();return true}
-  if(name==="myChurch"){state.churchProfile=d.profile||{};state.departments=d.departments||[];state.churchDepartments=d.churchDepartments||[];renderMyChurch();return true}
+  if(name==="myChurch"){state.churchProfile=d.profile||{};state.churchGer=d.ger||{};state.departments=d.departments||[];state.churchDepartments=d.churchDepartments||[];renderMyChurch();return true}
   if(name==="reports"){state.reports=d.reports||[];state.difficulties=d.difficulties||[];renderReports();return true}
   if(name==="developer"){state.users=d.users||[];renderUsers();return true}
   return false;
@@ -1010,6 +1010,7 @@ function renderDashboardShell(){
   $("overallPercent").textContent=state.dashboard?Math.round(num(state.dashboard?.geral?.percentual))+"%":"—";
   $("overallGoal").textContent=state.dashboard?fmt(state.dashboard?.geral?.meta):"—";
   $("overallReached").textContent=state.dashboard?fmt(state.dashboard?.geral?.alcancado):"—";
+  renderGerDashboard(state.dashboard?.ger||null);
 
   if(!state.dashboard){
     $("priorityCards").innerHTML=Object.keys(AREAS).map(area=>`
@@ -1079,6 +1080,7 @@ function rankingLevelValue(){return $("rankingLevel")?.value||"igrejas"}
 function rankingLabel(level){return level==="polos"?"Polos":level==="distritos"?"Distritos":"Igrejas"}
 function renderDashboard(d){
   const g=d.geral||{},p=num(g.percentual);$("overallRadial").style.setProperty("--value",p);$("overallPercent").textContent=Math.round(p)+"%";$("overallGoal").textContent=fmt(g.meta);$("overallReached").textContent=fmt(g.alcancado);
+  renderGerDashboard(d.ger||null);
   $("dailyBibleVerse").textContent=`Resultados de ${formatDateBR(d.context?.data_inicio)} a ${formatDateBR(d.context?.data_fim)}.`;
   $("priorityCards").innerHTML=(d.prioridades||[]).map(x=>`<button class="priority-card" data-area="${esc(x.prioridade)}" style="--accent:${AREAS[x.prioridade]||'#102333'}"><div style="display:flex;align-items:center;justify-content:space-between"><img class="priority-card-icon-v8" src="${AREA_ICONS[x.prioridade]||'assets/icone_192.png'}"><strong>${Math.round(num(x.percentual))}%</strong></div><h3>${esc(x.prioridade)}</h3><p>${fmt(x.alcancado)} de ${fmt(x.meta)} realizados</p><div class="progress"><i style="width:${Math.min(100,num(x.percentual))}%"></i></div></button>`).join("");
   qsa(".priority-card").forEach(b=>b.onclick=()=>openPriority(b.dataset.area));
@@ -1087,6 +1089,21 @@ function renderDashboard(d){
   const rankingLevel=(d.ranking||[])[0]?.nivel||rankingLevelValue();
   $("rankingTitle").textContent=rankingLabel(rankingLevel);
   const rankingLimitRaw=$("rankingLimitV20")?.value||"all";const rankingLimit=rankingLimitRaw==="all"?Infinity:Number(rankingLimitRaw||Infinity);const rankingRows=(d.ranking||[]).slice(0,rankingLimit);$("rankingList").innerHTML=rankingRows.map(x=>`<div class="ranking-item"><b>${x.posicao}</b><div><strong>${esc(x.nome||x.igreja||"")}</strong><span>${fmt(x.alcancado)} de ${fmt(x.meta)}</span></div><strong>${Math.round(num(x.percentual))}%</strong></div>`).join("")||'<div class="empty-v111">Sem ranking disponível.</div>';
+}
+
+function renderGerDashboard(ger){
+  const target=$("gerDashboardContent");if(!target)return;
+  const selected=selectedChurchId();
+  const title=$("gerDashboardPeriod");
+  if(title)title.textContent=selected?"Indicadores da igreja selecionada":"Totais do contexto selecionado";
+  if(!ger){target.innerHTML='<div class="empty-v111">Indicadores GER ainda não cadastrados para este contexto.</div>';return}
+  const total=num(ger.total),incoming=num(ger.transferencias_entrada),outgoing=num(ger.transferencias_saida);
+  target.innerHTML=`
+    <div class="ger-kpi total"><span>Total de membros</span><strong>${fmt(total)}</strong><small>${fmt(ger.igrejas_com_cadastro||0)} igreja(s) com cadastro</small></div>
+    <div class="ger-kpi frequent"><span>Frequentes</span><strong>${fmt(ger.frequentes)}</strong><small>Participação ativa</small></div>
+    <div class="ger-kpi infrequent"><span>Não frequentes</span><strong>${fmt(ger.nao_frequentes)}</strong><small>Necessitam acompanhamento</small></div>
+    <div class="ger-kpi rescue"><span>A resgatar</span><strong>${fmt(ger.a_resgatar)}</strong><small>Grupo Especial de Revisão</small></div>
+    <div class="ger-kpi transfer" title="Entradas: ${fmt(incoming)} · Saídas: ${fmt(outgoing)}" tabindex="0"><span>Transferências</span><strong>${fmt(incoming+outgoing)}</strong><small><b class="ger-up">↑ ${fmt(incoming)}</b><b class="ger-down">↓ ${fmt(outgoing)}</b></small></div>`;
 }
 
 
@@ -1638,17 +1655,18 @@ function plannerChurchOptions(selectedId=""){
 
 async function loadMyChurch(options={}){
   const churchId=selectedChurchId();if(!churchId)return;
-  const before={profile:state.churchProfile||{},departments:state.departments||[],churchDepartments:state.churchDepartments||[]};
+  const before={profile:state.churchProfile||{},ger:state.churchGer||{},departments:state.departments||[],churchDepartments:state.churchDepartments||[]};
   const r=await api("get_my_church",{...currentRequest(),igreja_id:churchId});
-  const next={profile:r.profile||{},departments:r.departamentos||r.departments||[],churchDepartments:r.igreja_departamentos||r.church_departments||[]};
-  state.churchProfile=next.profile;state.departments=next.departments;state.churchDepartments=next.churchDepartments;enterpriseWriteV225("myChurch",next);cacheSet("myChurch",next);
+  const ger=await api("get_church_ger",{...currentRequest(),igreja_id:churchId});
+  const next={profile:r.profile||{},ger:ger.ger||{},departments:r.departamentos||r.departments||[],churchDepartments:r.igreja_departamentos||r.church_departments||[]};
+  state.churchProfile=next.profile;state.churchGer=next.ger;state.departments=next.departments;state.churchDepartments=next.churchDepartments;enterpriseWriteV225("myChurch",next);cacheSet("myChurch",next);
   if(viewIsActiveV225("myChurch")&&(changedV225(before,next)||!options.background))renderMyChurch();
   return next;
 }
 function renderMyChurch(r={}){
   const p=state.churchProfile||{};$("churchProfileName").textContent=p.igreja||"Selecione uma igreja";const disabled=!p.igreja_id;$("churchEldersInput").value=p.quantidade_anciaos||0;$("churchFamiliesInput").value=p.quantidade_familias||0;$("churchUapgsInput").value=p.quantidade_uapgs||0;$("churchFirstElderInput").value=p.primeiro_anciao_diretor||"";$("churchFirstElderPhoneInput").value=p.contato_primeiro_anciao_diretor||"";$("churchAddressInput").value=p.endereco||"";$("churchNotesInput").value=p.observacoes||"";
   $("churchOfficersChecks").innerHTML=(state.departments||[]).map(d=>`<label class="dept-item-v111"><input type="checkbox" data-dept="${d.departamento_id}" ${d.tem_lider?"checked":""}><span><strong>${esc(d.departamento)}</strong><input type="text" data-dept-name="${d.departamento_id}" value="${esc(d.nome_lider||"")}" placeholder="Nome do líder"></span></label>`).join("");
-  ["churchEldersInput","churchFamiliesInput","churchUapgsInput","churchFirstElderInput","churchFirstElderPhoneInput","churchAddressInput","churchNotesInput","saveChurchProfileButton","saveChurchProfileButtonBottom"].forEach(id=>$(id).disabled=disabled);
+  ["churchEldersInput","churchFamiliesInput","churchUapgsInput","churchFirstElderInput","churchFirstElderPhoneInput","churchAddressInput","churchNotesInput","saveChurchProfileButton","saveChurchProfileButtonBottom","editGerButton"].forEach(id=>$(id).disabled=disabled);
 
   bindChurchDirtyTracking();
 
@@ -1658,6 +1676,30 @@ function renderMyChurch(r={}){
     const btn=$("saveChurchProfileButton");const btnBottom=$("saveChurchProfileButtonBottom");
     btn.textContent="Selecione uma igreja";
   }
+}
+
+function refreshGerTotal(){
+  const total=num($("membersFrequentInput")?.value)+num($("membersInfrequentInput")?.value)+num($("membersRescueInput")?.value);
+  if($("membersTotalPreview"))$("membersTotalPreview").textContent=fmt(total);
+}
+async function openGerEditor(){
+  const churchId=effectiveMyChurchId();if(!churchId)return toast("Selecione uma igreja.");
+  try{
+    const r=await api("get_church_ger",{...currentRequest(),igreja_id:churchId});
+    const g=r.ger||{};state.churchGer=g;
+    $("membersChurchName").textContent=`Indicadores anuais de ${state.churchProfile?.igreja||"igreja selecionada"}.`;
+    $("membersFrequentInput").value=num(g.frequentes);$("membersInfrequentInput").value=num(g.nao_frequentes);$("membersRescueInput").value=num(g.a_resgatar);$("membersTransferEntryInput").value=num(g.transferencias_entrada);$("membersTransferExitInput").value=num(g.transferencias_saida);
+    refreshGerTotal();$("membersModal").classList.add("open");
+  }catch(e){toast(e.message||"Não foi possível carregar o GER.")}
+}
+async function saveGer(){
+  const churchId=effectiveMyChurchId();if(!churchId)return toast("Selecione uma igreja.");
+  const button=$("saveMembersButton");button.disabled=true;button.textContent="Salvando...";
+  try{
+    await api("save_church_ger",{...currentRequest(),igreja_id:churchId,frequentes:num($("membersFrequentInput").value),nao_frequentes:num($("membersInfrequentInput").value),a_resgatar:num($("membersRescueInput").value),transferencias_entrada:num($("membersTransferEntryInput").value),transferencias_saida:num($("membersTransferExitInput").value)});
+    closeModalById("membersModal");cacheInvalidate(["dashboard","myChurch"]);toast("Indicadores GER salvos.");
+    await Promise.all([loadMyChurch({background:true}),loadDashboard({background:true})]);
+  }catch(e){toast(e.message||"Não foi possível salvar o GER.")}finally{button.disabled=false;button.textContent="Salvar GER"}
 }
 async function saveMyChurch(){
   const churchId=effectiveMyChurchId();
@@ -2603,6 +2645,9 @@ function bind(){
 
   bindClick("saveChurchProfileButton",saveMyChurch);
   bindClick("saveChurchProfileButtonBottom",saveMyChurch);
+  bindClick("editGerButton",openGerEditor);
+  bindClick("saveMembersButton",saveGer);
+  ["membersFrequentInput","membersInfrequentInput","membersRescueInput"].forEach(id=>{bindInput(id,refreshGerTotal);bindChange(id,refreshGerTotal)});
 
   bindClick("printAiReportButton",()=>printReportObject(state.currentReport||state.reports[0]));
   bindClick("shareAiReportButton",()=>openWhatsAppApp(state.currentReport?.resumo_whatsapp||state.currentAiReport));
