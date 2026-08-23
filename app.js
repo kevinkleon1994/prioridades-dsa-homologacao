@@ -1102,7 +1102,7 @@ function renderGerDashboard(ger){
     <div class="ger-kpi total"><span>Total de membros</span><strong>${fmt(total)}</strong><small>${fmt(ger.igrejas_com_cadastro||0)} igreja(s) com cadastro</small></div>
     <div class="ger-kpi frequent"><span>Frequentes</span><strong>${fmt(ger.frequentes)}</strong><small>Participação ativa</small></div>
     <div class="ger-kpi infrequent"><span>Não frequentes</span><strong>${fmt(ger.nao_frequentes)}</strong><small>Necessitam acompanhamento</small></div>
-    <div class="ger-kpi rescue"><span>A resgatar</span><strong>${fmt(ger.a_resgatar)}</strong><small>Grupo Especial de Revisão</small></div>
+    <div class="ger-kpi rescue"><span>A resgatar</span><strong>${fmt(ger.a_resgatar)}</strong><small>Visitação para reencontro</small></div>
     <div class="ger-kpi transfer" title="Entradas: ${fmt(incoming)} · Saídas: ${fmt(outgoing)}" tabindex="0"><span>Transferências</span><strong>${fmt(incoming+outgoing)}</strong><small><b class="ger-up">↑ ${fmt(incoming)}</b><b class="ger-down">↓ ${fmt(outgoing)}</b></small></div>`;
 }
 
@@ -1679,7 +1679,7 @@ function renderMyChurch(r={}){
 }
 
 function refreshGerTotal(){
-  const total=num($("membersFrequentInput")?.value)+num($("membersInfrequentInput")?.value)+num($("membersRescueInput")?.value);
+  const total=num($("membersFrequentInput")?.value)+num($("membersInfrequentInput")?.value)+num($("membersRescueInput")?.value)+num($("membersTransferEntryInput")?.value)+num($("membersTransferExitInput")?.value);
   if($("membersTotalPreview"))$("membersTotalPreview").textContent=fmt(total);
 }
 async function openGerEditor(){
@@ -2647,7 +2647,7 @@ function bind(){
   bindClick("saveChurchProfileButtonBottom",saveMyChurch);
   bindClick("editGerButton",openGerEditor);
   bindClick("saveMembersButton",saveGer);
-  ["membersFrequentInput","membersInfrequentInput","membersRescueInput"].forEach(id=>{bindInput(id,refreshGerTotal);bindChange(id,refreshGerTotal)});
+  ["membersFrequentInput","membersInfrequentInput","membersRescueInput","membersTransferEntryInput","membersTransferExitInput"].forEach(id=>{bindInput(id,refreshGerTotal);bindChange(id,refreshGerTotal)});
 
   bindClick("printAiReportButton",()=>printReportObject(state.currentReport||state.reports[0]));
   bindClick("shareAiReportButton",()=>openWhatsAppApp(state.currentReport?.resumo_whatsapp||state.currentAiReport));
