@@ -2254,8 +2254,12 @@ async function openUser(id=""){
   try{
   let detail=null,userModules=[];if(id){const r=await api("get_user_admin",{usuario_id:id});detail=r.data||r;userModules=detail.modules||[];detail=detail.user||detail}
   const u=detail||{};$("editingUserId").value=id;$("userModalTitle").textContent=id?"Editar usuário":"Novo usuário";$("userNameInput").value=u.nome||"";$("userRoleInput").value=u.perfil||"Secretário(a)";$("userLoginInput").value=u.login||"";$("userPasswordInput").value="";$("userPhotoInput").value="";$("userPhotoCurrentV20").textContent=u.foto_url?"Foto atual cadastrada ✔️":"Nenhuma foto cadastrada";$("userPhotoCurrentV20").title=u.foto_url||"";$("userActiveInput").value=String(u.ativo!==false);populateUserTerritory(u);
-  const modulesBase=(state.developer?.modulos||[]);const permittedIds=new Set(userModules.filter(x=>x.permitido).map(x=>x.modulo_id));
-  $("userModulesChecks").innerHTML=modulesBase.map(m=>`<label class="check-v101"><input type="checkbox" value="${m.modulo_id}" ${id?permittedIds.has(m.modulo_id):"checked"}><span>${esc(m.titulo||m.modulo)}</span></label>`).join("");
+  const modulesBase=(state.developer?.modulos||[]);
+  const permittedIds=new Set(userModules.filter(x=>x.permitido===true||["true","1","sim","ativo"].includes(String(x.permitido||"").toLowerCase())).map(x=>String(x.modulo_id||"")));
+  const legacyModules=new Set(String(u.modulos_legado||"").split(",").map(x=>x.trim().toLowerCase()).filter(Boolean));
+  const isDeveloper=String(u.perfil||"").toLowerCase()==="desenvolvedor";
+  const isPermitted=m=>permittedIds.has(String(m.modulo_id||""))||(!permittedIds.size&&legacyModules.has(String(m.modulo||"").trim().toLowerCase()))||(!permittedIds.size&&!legacyModules.size&&isDeveloper);
+  $("userModulesChecks").innerHTML=modulesBase.map(m=>`<label class="check-v101"><input type="checkbox" value="${m.modulo_id}" ${id?isPermitted(m):"checked"}><span>${esc(m.titulo||m.modulo)}</span></label>`).join("");
   $("deleteUserButtonV222")?.classList.toggle("hidden",!id);$("saveUserButton").textContent="Salvar";
   $("userModal").classList.add("open");
   document.body.classList.add("modal-open-v118");
