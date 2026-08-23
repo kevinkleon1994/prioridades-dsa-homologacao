@@ -15,7 +15,7 @@ let state={
   context:{polo_id:"",distrito_id:"",igreja_id:"",data_inicio:"",data_fim:""},
   dashboard:null,requirements:[],results:[],planner:[],reports:[],difficulties:[],
   fofaItems:[],fofaEvaluations:[],fofaHistory:[],fofaCurrent:null,fofaAxis:"Identidade",fofaSmart:null,fofaCatalog:{},fofaCompletion:null,
-  churchProfile:null,departments:[],churchFormDirty:false,users:[],developer:null,
+  churchProfile:null,departments:[],churchFormDirty:false,users:[],developer:null,systemHealth:null,
   currentPriority:"Identidade",selectedRequirementId:"",currentAiReport:"",currentReport:null,editingReportId:""
 };
 
@@ -2312,6 +2312,27 @@ async function loadDeveloper(options={}){
   if(viewIsActiveV225("admin")&&(changedV225(before,next)||!options.background))renderUsers();
   return next;
 }
+function showAdminPanel(panel){
+  const health=panel==="health";
+  $("adminUsersPanel")?.classList.toggle("hidden-v111",health);
+  $("systemHealthPanel")?.classList.toggle("hidden-v111",!health);
+  $("newUserButton")?.classList.toggle("hidden-v111",health);
+  $("adminUsersTab")?.classList.toggle("primary",!health);
+  $("systemHealthTab")?.classList.toggle("primary",health);
+  if(health&&!state.systemHealth)loadSystemHealth();
+}
+async function loadSystemHealth(){
+  const target=$("systemHealthContent");
+  if(target)target.innerHTML='<div class="empty-v111">Verificando conexão e integridade...</div>';
+  try{const r=await api("system_health",{}, {noRetry:true});state.systemHealth=r.data||r;renderSystemHealth();setSyncState("Conectado","ok");}
+  catch(e){if(target)target.innerHTML=`<div class="empty-v111">${esc(e.message||"Não foi possível verificar o sistema.")}</div>`;setSyncState("Erro de sincronização","error");}
+}
+function renderSystemHealth(){
+  const d=state.systemHealth||{},target=$("systemHealthContent");if(!target)return;
+  const sheets=(d.planilha?.abas||[]).map(s=>`<li>${esc(s.nome)}: <strong>${s.disponivel?"Disponível":"Ausente"}</strong></li>`).join("");
+  const errors=(d.erros_recentes||[]).map(e=>`<li><strong>${esc(e.acao||"Erro")}</strong> · ${esc(e.entidade||"")}</li>`).join("")||'<li>Nenhum erro recente registrado.</li>';
+  target.innerHTML=`<article class="panel"><h3>Conexão</h3><p><strong>${esc(d.conexao||"Indisponível")}</strong></p><p>Resposta: ${esc(String(d.resposta_ms||0))} ms</p></article><article class="panel"><h3>Versões</h3><p>Sistema: ${esc(d.app?.versao||"—")}</p><p>Banco: ${esc(d.app?.banco||"—")}</p></article><article class="panel"><h3>Base de dados</h3><p>Planilha configurada: <strong>${d.planilha?.configurada?"Sim":"Não"}</strong></p><p>Usuários ativos: ${esc(String(d.usuarios_ativos||0))}</p><p>Última atividade: ${esc(d.ultima_atividade||"—")}</p></article><article class="panel"><h3>Abas verificadas</h3><ul>${sheets}</ul></article><article class="panel"><h3>Erros recentes</h3><ul>${errors}</ul></article>`;
+}
 function renderUsers(){const q=($("userSearch").value||"").toLowerCase(),rows=state.users.filter(u=>`${u.nome} ${u.login} ${u.perfil}`.toLowerCase().includes(q));$("usersCount").textContent=`${rows.length} usuário${rows.length===1?"":"s"}`;$("usersTableBody").innerHTML=rows.map(u=>`<tr><td><strong>${esc(u.nome)}</strong></td><td>${esc(u.perfil)}</td><td>${esc(u.polo_id||"")} / ${esc(u.distrito_id||"")} / ${esc(u.igreja_id||"")}</td><td>${esc(u.login)}</td><td>••••••</td><td><span class="access-pill ${u.ativo?"active":"inactive"}"><i></i>${u.ativo?"Ativo":"Inativo"}</span></td><td><div class="user-actions"><button class="user-action edit" data-user="${u.usuario_id}">Editar</button><button class="user-action toggle" data-toggle="${u.usuario_id}">${u.ativo?"Inativar":"Ativar"}</button></div></td></tr>`).join("");qsa("[data-user]").forEach(b=>b.onclick=()=>openUser(b.dataset.user));qsa("[data-toggle]").forEach(b=>b.onclick=()=>toggleUser(b.dataset.toggle))}
 function fillUserTerritoryOptions(selected={}){
   const pole=$("userPoleInput"),district=$("userDistrictInput"),church=$("userChurchInput");
@@ -2542,6 +2563,9 @@ function bind(){
   bindClick("logoutButton",logout);
 
   qsa(".nav-button[data-view]").forEach(b=>b.onclick=()=>showView(b.dataset.view));
+  bindClick("adminUsersTab",()=>showAdminPanel("users"));
+  bindClick("systemHealthTab",()=>showAdminPanel("health"));
+  bindClick("refreshSystemHealthButton",()=>loadSystemHealth());
   bindClick("prioritiesToggle",()=>$("prioritySubmenu")?.classList.toggle("open"));
   qsa("[data-priority]").forEach(b=>b.onclick=()=>openPriority(b.dataset.priority));
 
